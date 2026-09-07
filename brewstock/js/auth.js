@@ -2,9 +2,20 @@ const Auth = {
   user: null,
 
   async init() {
-    const saved = sessionStorage.getItem('brewstock_user');
-    if (saved) {
-      try { this.user = JSON.parse(saved); } catch(e) {}
+    // Bersihkan session lama jika ada versi konflik
+    try {
+      const saved = sessionStorage.getItem('brewstock_user');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Validasi: user harus punya username dan role
+        if (parsed && parsed.username && parsed.role) {
+          this.user = parsed;
+        } else {
+          sessionStorage.removeItem('brewstock_user');
+        }
+      }
+    } catch(e) {
+      sessionStorage.removeItem('brewstock_user');
     }
   },
 
