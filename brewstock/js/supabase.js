@@ -117,37 +117,26 @@ const DataAPI = {
       return { ...u }; // return copy agar DB tidak termutasi
     }
     const sb = await getSupabase();
-    console.log('[BrewStock] Mode: Supabase | User:', username);
 
-    // Query langsung ke tabel users (schema public by default)
+    // Simple query — ambil semua user lalu filter di client side
+    // Ini menghindari semua masalah RLS/PGRST pada filter query
     const { data, error } = await sb
       .from('users')
-      .select('*')
-      .ilike('username', username)
-      .eq('password', password)
-      .maybeSingle();
-
-    console.log('[BrewStock] Login result data:', data ? 'FOUND' : 'NOT FOUND');
-    console.log('[BrewStock] Login error:', error);
+      .select('*');
 
     if (error) {
-      // Jika masih RLS error, coba via RPC
-      if (error.code === '42501' || error.message.includes('permission') || error.message.includes('policy')) {
-        console.log('[BrewStock] RLS detected, trying RPC fallback...');
-        const { data: rpcData, error: rpcError } = await sb.rpc('login_user', {
-          p_username: username,
-          p_password: password
-        });
-        if (rpcError) throw new Error('RLS Error — jalankan SQL fix di Supabase. Detail: ' + rpcError.message);
-        if (!rpcData || rpcData.length === 0) throw new Error('Username atau password salah');
-        return rpcData[0];
-      }
-      throw new Error('DB Error: ' + error.message + ' (code: ' + error.code + ')');
+      throw new Error('Tidak bisa membaca database: ' + error.message + ' (code: ' + error.code + ')');
     }
-    if (!data) {
-      throw new Error('Username atau password tidak cocok dengan data di Supabase');
-    }
-    return data;
+
+    // Filter di JavaScript
+    const user = (data || []).find(u =>
+      u.username.toLowerCase() === username &&
+      u.password === password
+    );
+
+    if (!user) throw new Error('Username atau password salah');
+    if (user.status === 'INACTIVE') throw new Error('Akun tidak aktif');
+    return user;
   },
 
   // BAHAN
