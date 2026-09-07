@@ -119,9 +119,8 @@ const DataAPI = {
     const sb = await getSupabase();
     console.log('[BrewStock] Mode: Supabase | User:', username);
 
-    // Eksplisit pakai schema public, gunakan rpc untuk bypass RLS
+    // Query langsung ke tabel users (schema public by default)
     const { data, error } = await sb
-      .schema('public')
       .from('users')
       .select('*')
       .ilike('username', username)
