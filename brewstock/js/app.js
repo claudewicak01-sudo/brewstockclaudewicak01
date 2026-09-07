@@ -23,7 +23,8 @@ const App = {
       await Auth.login(username, password);
       this._showApp();
     } catch (e) {
-      errEl.textContent = e.message;
+      const mode = (typeof DEMO_MODE !== 'undefined' && DEMO_MODE) ? ' [Demo Mode]' : ' [Supabase Mode]';
+      errEl.textContent = e.message + mode;
       errEl.style.display = 'block';
     }
   },
@@ -57,15 +58,17 @@ const App = {
   },
 };
 
-// ─── DEMO FILL ───────────────────────────────────────────────
+// ─── DEMO FILL — langsung login tanpa ketik manual ───────────
 function fillDemo(role) {
-  if (role === 'admin') {
-    document.getElementById('login-username').value = 'admin';
-    document.getElementById('login-password').value = 'admin123';
-  } else {
-    document.getElementById('login-username').value = 'bartender';
-    document.getElementById('login-password').value = 'user123';
-  }
+  const creds = role === 'admin'
+    ? { username: 'admin', password: 'admin123' }
+    : { username: 'bartender', password: 'user123' };
+
+  document.getElementById('login-username').value = creds.username;
+  document.getElementById('login-password').value = creds.password;
+
+  // Langsung login setelah fill
+  setTimeout(() => App.login(), 50);
 }
 
 // ─── KEYBOARD SHORTCUTS ──────────────────────────────────────
