@@ -4,7 +4,8 @@
  * menggunakan data dummy in-memory.
  */
 
-const DEMO_MODE = SUPABASE_URL.includes('YOUR_PROJECT');
+// Lazy evaluation — pastikan config.js sudah dimuat duluan
+const DEMO_MODE = (typeof SUPABASE_URL === 'undefined') || SUPABASE_URL.includes('YOUR_PROJECT') || SUPABASE_URL.includes('undefined');
 
 // ─── SUPABASE CLIENT ────────────────────────────────────────
 let _sb = null;
@@ -95,12 +96,19 @@ const DataAPI = {
 
   // AUTH
   async login(username, password) {
+    // Trim whitespace yang tidak sengaja
+    username = (username || '').trim().toLowerCase();
+    password = (password || '').trim();
+
     if (DEMO_MODE) {
-      const u = DB.users.find(x => x.username === username && x.password === password);
-      if (!u) throw new Error('Username atau password salah');
+      const u = DB.users.find(x =>
+        x.username.toLowerCase() === username &&
+        x.password === password
+      );
+      if (!u) throw new Error(`Username atau password salah. Coba: admin/admin123`);
       if (u.status === 'INACTIVE') throw new Error('Akun tidak aktif');
       u.last_login = new Date().toLocaleString('id-ID');
-      return u;
+      return { ...u }; // return copy agar DB tidak termutasi
     }
     const sb = await getSupabase();
     const { data, error } = await sb.from('users').select('*').eq('username', username).eq('password', password).single();
