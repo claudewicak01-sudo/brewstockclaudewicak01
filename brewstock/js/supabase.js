@@ -13,23 +13,69 @@ const DEMO_MODE = (
   !SUPABASE_URL.startsWith('https://')
 );
 
-// ─── SUPABASE CLIENT ────────────────────────────────────────
-let _sb = null;
-async function getSupabase() {
-  if (_sb) return _sb;
-  if (DEMO_MODE) return null;
-  // Load Supabase CDN dynamically
-  if (!window.supabase) {
-    await new Promise((res, rej) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js';
-      s.onload = res; s.onerror = rej;
-      document.head.appendChild(s);
-    });
+// ─── SUPABASE REST API (pure fetch, no SDK) ─────────────────
+// Ini lebih reliable karena tidak bergantung pada CDN atau SDK version
+
+async function sbFetch(table, params = '') {
+  const url = `${SUPABASE_URL}/rest/v1/${table}${params ? '?' + params : ''}`;
+  const res = await fetch(url, {
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    }
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err.message || res.statusText) + ' (code: ' + (err.code || res.status) + ')');
   }
-  _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-  return _sb;
+  return res.json();
 }
+
+async function sbInsert(table, body) {
+  const url = `${SUPABASE_URL}/rest/v1/${table}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Prefer': 'return=representation',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err.message || res.statusText) + ' (code: ' + (err.code || res.status) + ')');
+  }
+  return res.json();
+}
+
+async function sbUpdate(table, match, body) {
+  const params = Object.entries(match).map(([k,v]) => `${k}=eq.${encodeURIComponent(v)}`).join('&');
+  const url = `${SUPABASE_URL}/rest/v1/${table}?${params}`;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Prefer': 'return=representation',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err.message || res.statusText) + ' (code: ' + (err.code || res.status) + ')');
+  }
+  return res.json();
+}
+
+// Dummy getSupabase untuk kompatibilitas (tidak dipakai lagi)
+async function getSupabase() { return null; }
 
 // ─── DEMO DATA ────────────────────────────────────────────────
 const DB = {
@@ -116,20 +162,10 @@ const DataAPI = {
       u.last_login = new Date().toLocaleString('id-ID');
       return { ...u }; // return copy agar DB tidak termutasi
     }
-    const sb = await getSupabase();
+    // Pure fetch ke Supabase REST API — tanpa SDK
+    const allUsers = await sbFetch('users', 'select=*');
 
-    // Simple query — ambil semua user lalu filter di client side
-    // Ini menghindari semua masalah RLS/PGRST pada filter query
-    const { data, error } = await sb
-      .from('users')
-      .select('*');
-
-    if (error) {
-      throw new Error('Tidak bisa membaca database: ' + error.message + ' (code: ' + error.code + ')');
-    }
-
-    // Filter di JavaScript
-    const user = (data || []).find(u =>
+    const user = allUsers.find(u =>
       u.username.toLowerCase() === username &&
       u.password === password
     );
@@ -142,15 +178,12 @@ const DataAPI = {
   // BAHAN
   async getBahan() {
     if (DEMO_MODE) return [...DB.bahan];
-    const sb = await getSupabase();
-    const { data } = await sb.from('bahan').select('*').order('kode');
-    return data || [];
+    return await sbFetch('bahan', 'select=*&order=kode');
   },
   async addBahan(item) {
     if (DEMO_MODE) { const r = {...item, id: nextId()}; DB.bahan.push(r); return r; }
-    const sb = await getSupabase();
-    const { data } = await sb.from('bahan').insert(item).select().single();
-    return data;
+    const rows = await sbInsert('bahan', item);
+    return Array.isArray(rows) ? rows[0] : rows;
   },
   async updateBahanStatus(id, status, notes) {
     if (DEMO_MODE) {
@@ -159,23 +192,19 @@ const DataAPI = {
       DataAPI.addAuditTrail({ user: Auth.user.username, activity: status === 'approved' ? 'Approve' : 'Reject', module: 'Material', record: r?.nama || '', old_val: 'Waiting', new_val: status });
       return r;
     }
-    const sb = await getSupabase();
-    const { data } = await sb.from('bahan').update({ status, notes }).eq('id', id).select().single();
-    return data;
+    const rows = await sbUpdate('bahan', {id}, { status, notes });
+    return Array.isArray(rows) ? rows[0] : rows;
   },
 
   // MENU
   async getMenu() {
     if (DEMO_MODE) return [...DB.menu];
-    const sb = await getSupabase();
-    const { data } = await sb.from('menu').select('*').order('kode');
-    return data || [];
+    return await sbFetch('menu', 'select=*&order=kode');
   },
   async addMenu(item) {
     if (DEMO_MODE) { const r = {...item, id: nextId()}; DB.menu.push(r); return r; }
-    const sb = await getSupabase();
-    const { data } = await sb.from('menu').insert(item).select().single();
-    return data;
+    const rows = await sbInsert('menu', item);
+    return Array.isArray(rows) ? rows[0] : rows;
   },
   async updateMenuStatus(id, status) {
     if (DEMO_MODE) {
@@ -184,31 +213,25 @@ const DataAPI = {
       DataAPI.addAuditTrail({ user: Auth.user.username, activity: status === 'approved' ? 'Approve' : 'Reject', module: 'Menu', record: r?.nama || '', old_val: 'Waiting', new_val: status });
       return r;
     }
-    const sb = await getSupabase();
-    const { data } = await sb.from('menu').update({ status }).eq('id', id).select().single();
-    return data;
+    const rows = await sbUpdate('menu', {id}, { status });
+    return Array.isArray(rows) ? rows[0] : rows;
   },
 
   // RESEP
   async getResep() {
     if (DEMO_MODE) return [...DB.resep];
-    const sb = await getSupabase();
-    const { data } = await sb.from('resep').select('*');
-    return data || [];
+    return await sbFetch('resep', 'select=*');
   },
   async addResepLines(lines) {
     if (DEMO_MODE) { lines.forEach(l => { DB.resep.push({...l, id: nextId()}); }); return lines; }
-    const sb = await getSupabase();
-    const { data } = await sb.from('resep').insert(lines).select();
-    return data;
+    return await sbInsert('resep', lines);
   },
 
   // PEMBELIAN
   async getPembelian() {
     if (DEMO_MODE) return [...DB.pembelian].reverse();
-    const sb = await getSupabase();
-    const { data } = await sb.from('pembelian').select('*').order('tanggal', { ascending: false });
-    return data || [];
+    const rows = await sbFetch('pembelian', 'select=*&order=tanggal.desc');
+    return rows;
   },
   async addPembelian(item) {
     if (DEMO_MODE) {
@@ -220,17 +243,14 @@ const DataAPI = {
       if (b) b.stock_current += r.qty;
       return r;
     }
-    const sb = await getSupabase();
-    const { data } = await sb.from('pembelian').insert(item).select().single();
-    return data;
+    const rows = await sbInsert('pembelian', item);
+    return Array.isArray(rows) ? rows[0] : rows;
   },
 
   // PENJUALAN
   async getPenjualan() {
     if (DEMO_MODE) return [...DB.penjualan].reverse();
-    const sb = await getSupabase();
-    const { data } = await sb.from('penjualan').select('*').order('tanggal', { ascending: false });
-    return data || [];
+    return await sbFetch('penjualan', 'select=*&order=tanggal.desc');
   },
   async addPenjualan(item) {
     if (DEMO_MODE) {
@@ -239,17 +259,14 @@ const DataAPI = {
       DataAPI.addAuditTrail({ user: Auth.user.username, activity: 'Submit', module: 'Sales', record: `${r.menu_nama} x${r.qty}`, old_val: '', new_val: 'Submitted' });
       return r;
     }
-    const sb = await getSupabase();
-    const { data } = await sb.from('penjualan').insert(item).select().single();
-    return data;
+    const rows = await sbInsert('penjualan', item);
+    return Array.isArray(rows) ? rows[0] : rows;
   },
 
   // STOCK OPNAME
   async getStockOpname() {
     if (DEMO_MODE) return [...DB.stock_opname].reverse();
-    const sb = await getSupabase();
-    const { data } = await sb.from('stock_opname').select('*').order('tanggal', { ascending: false });
-    return data || [];
+    return await sbFetch('stock_opname', 'select=*&order=tanggal.desc');
   },
   async addStockOpname(item) {
     if (DEMO_MODE) {
@@ -260,17 +277,14 @@ const DataAPI = {
       DataAPI.addAuditTrail({ user: Auth.user.username, activity: 'Submit', module: 'StockOpname', record: r.bahan_nama, old_val: r.system_stock, new_val: r.actual_stock });
       return r;
     }
-    const sb = await getSupabase();
-    const { data } = await sb.from('stock_opname').insert(item).select().single();
-    return data;
+    const rows = await sbInsert('stock_opname', item);
+    return Array.isArray(rows) ? rows[0] : rows;
   },
 
   // DAILY REPORT
   async getDailyReport() {
     if (DEMO_MODE) return [...DB.daily_report].reverse();
-    const sb = await getSupabase();
-    const { data } = await sb.from('daily_report').select('*').order('tanggal', { ascending: false });
-    return data || [];
+    return await sbFetch('daily_report', 'select=*&order=tanggal.desc');
   },
   async addDailyReport(item) {
     if (DEMO_MODE) {
@@ -279,17 +293,14 @@ const DataAPI = {
       DataAPI.addAuditTrail({ user: Auth.user.username, activity: 'Submit', module: 'DailyReport', record: `${r.tanggal} ${r.shift}`, old_val: 'Draft', new_val: 'Submitted' });
       return r;
     }
-    const sb = await getSupabase();
-    const { data } = await sb.from('daily_report').insert(item).select().single();
-    return data;
+    const rows = await sbInsert('daily_report', item);
+    return Array.isArray(rows) ? rows[0] : rows;
   },
 
   // USERS
   async getUsers() {
     if (DEMO_MODE) return [...DB.users].map(u => ({...u, password: undefined}));
-    const sb = await getSupabase();
-    const { data } = await sb.from('users').select('id,username,nama,role,outlet,status,created_at,last_login');
-    return data || [];
+    return await sbFetch('users', 'select=id,username,nama,role,outlet,status,created_at,last_login');
   },
   async addUser(item) {
     if (DEMO_MODE) {
@@ -297,9 +308,8 @@ const DataAPI = {
       DB.users.push(r);
       return r;
     }
-    const sb = await getSupabase();
-    const { data } = await sb.from('users').insert(item).select().single();
-    return data;
+    const rows = await sbInsert('users', item);
+    return Array.isArray(rows) ? rows[0] : rows;
   },
   async updateUserStatus(id, status) {
     if (DEMO_MODE) {
@@ -307,23 +317,19 @@ const DataAPI = {
       if (u) u.status = status;
       return u;
     }
-    const sb = await getSupabase();
-    const { data } = await sb.from('users').update({ status }).eq('id', id).select().single();
-    return data;
+    const rows = await sbUpdate('users', {id}, { status });
+    return Array.isArray(rows) ? rows[0] : rows;
   },
 
   // AUDIT TRAIL
   async getAuditTrail() {
     if (DEMO_MODE) return [...DB.audit_trail].reverse();
-    const sb = await getSupabase();
-    const { data } = await sb.from('audit_trail').select('*').order('tanggal', { ascending: false }).limit(200);
-    return data || [];
+    return await sbFetch('audit_trail', 'select=*&order=tanggal.desc&limit=200');
   },
   async addAuditTrail(item) {
     const record = { ...item, id: nextId(), tanggal: new Date().toLocaleString('id-ID') };
     if (DEMO_MODE) { DB.audit_trail.push(record); return record; }
-    const sb = await getSupabase();
-    await sb.from('audit_trail').insert(record);
+    await sbInsert('audit_trail', record);
     return record;
   },
 
