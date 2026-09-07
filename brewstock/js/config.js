@@ -6,7 +6,7 @@
  *
  * Jika sudah siap pakai Supabase sungguhan, ganti kedua nilai ini:
  */
-const SUPABASE_URL = 'https://crdabsztgartxbhwxwzm.supabase.co/';   // ← biarkan ini dulu
+const SUPABASE_URL = 'https://crdabsztgartxbhwxwzm.supabase.co';   // ← biarkan ini dulu
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNyZGFic3p0Z2FydHhiaHd4d3ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3NDU5MjMsImV4cCI6MjEwNDMyMTkyM30.APsYeC9RJwTJY0eHFLBqLZd9dmTW4yxWqTT2UCBHjag'; // ← biarkan ini dulu
 
 // Konfigurasi aplikasi
