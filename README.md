@@ -16,9 +16,8 @@
 3. Setelah project dibuat, buka **SQL Editor**
 4. Copy-paste isi file `supabase-schema.sql` dan klik **Run**
 5. Buka **Settings > API** — catat:
-   - `Project URL` → `SUPABASE_URL` - https://crdabsztgartxbhwxwzm.supabase.co/rest/v1/
-   - `anon public key` → `SUPABASE_KEY`- eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNyZGFic3p0Z2FydHhiaHd4d3ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3NDU5MjMsImV4cCI6MjEwNDMyMTkyM30.APsYeC9RJwTJY0eHFLBqLZd9dmTW4yxWqTT2UCBHjag
-
+   - `Project URL` → `SUPABASE_URL`
+   - `anon public key` → `SUPABASE_KEY`
 ### Setup Storage (untuk foto nota & POS):
 1. Buka **Storage** di sidebar Supabase
 2. Klik **New Bucket** → nama: `brewstock-files`
