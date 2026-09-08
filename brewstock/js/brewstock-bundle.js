@@ -576,7 +576,7 @@ function _renderPenjualan(el,q) {
   </div>
   <div class="card">
     <div class="card-head">
-      <div class="search-box">${IC.search()}<input type="text" placeholder="Cari..." oninput="_renderPenjualan(document.getElementById('pc'),this.value)" /></div>
+      <div class="search-box">${IC.search()}<input type="text" placeholder="Cari..." oninput="_renderPenjualan(document.getElementById('page-content'),this.value)" /></div>
     </div>
     <div class="card-body-p0">
       ${buildTable({cols:[
@@ -587,8 +587,7 @@ function _renderPenjualan(el,q) {
       ],data,empty:'Belum ada penjualan'})}
     </div>
   </div>`;
-  el.id='pc';
-}
+  }
 
 function _openPenjualan() {
   const approvedMenu = _pjMenu.filter(m=>m.status==='approved');
@@ -648,7 +647,7 @@ async function _savePenjualan() {
     await DataAPI.savePenjualan({tanggal:tgl,shift:document.getElementById('pj-shift').value,menu_id:menuId,menu_nama:menuNama,qty,harga,total:harga*qty,metode:document.getElementById('pj-met').value,created_by:Auth.user.username});
     Modal.close(); Toast.success(`${menuNama} x${qty} disimpan — stok dikurangi otomatis`);
     _pjData=await DataAPI.getPenjualan().catch(()=>[]);
-    const cont=document.getElementById('pc'); if(cont) _renderPenjualan(cont,'');
+    const cont=document.getElementById('page-content'); if(cont) _renderPenjualan(cont,'');
   } catch(e){Toast.error(e.message);}
 }
 
@@ -710,8 +709,7 @@ function _renderOpname(el) {
       ],data:_soData,empty:'Belum ada stock opname'})}
     </div>
   </div>`;
-  el.id='so-page';
-}
+  }
 
 let _soFoto=null;
 function _openOpname() {
@@ -776,7 +774,7 @@ async function _saveOpname(){
     Modal.close(); Toast.success('Opname disimpan — stok sistem diupdate ke '+fmt.number(actual));
     if(status==='critical') Toast.warning('⚠ CRITICAL: Selisih besar ditemukan! Perlu investigasi.');
     [_soData,_soBahan]=await Promise.all([DataAPI.getStockOpname().catch(()=>[]),DataAPI.getBahan().catch(()=>[])]);
-    const el=document.getElementById('so-page'); if(el) _renderOpname(el);
+    const el=document.getElementById('page-content'); if(el) _renderOpname(el);
   }catch(e){Toast.error(e.message);}
 }
 
@@ -804,8 +802,7 @@ function _renderDR(el){
       ],data:_drData,empty:'Belum ada daily report'})}
     </div>
   </div>`;
-  el.id='dr-page';
-}
+  }
 function _openDR(){
   _drFoto=null;
   Modal.open({title:'Input Daily Report',size:'lg',body:`
@@ -868,15 +865,14 @@ async function _saveDR(){
     Modal.close(); Toast.success('Daily report disubmit');
     if(variance!==0) Toast.warning('Cash variance terdeteksi: '+fmt.currency(Math.abs(variance)));
     _drData=await DataAPI.getDailyReport().catch(()=>[]);
-    const el=document.getElementById('dr-page'); if(el) _renderDR(el);
+    const el=document.getElementById('page-content'); if(el) _renderDR(el);
   }catch(e){Toast.error(e.message);}
 }
 
 // ─── PAGE: MASTER BAHAN ──────────────────────────────────────
 let _mbData=[], _mbQ='';
 async function pageMasterBahan(el){
-  el.id='mb-page';
-  _mbData=await DataAPI.getBahan().catch(()=>[]);
+    _mbData=await DataAPI.getBahan().catch(()=>[]);
   _renderMB(el);
 }
 function _renderMB(el){
@@ -888,7 +884,7 @@ function _renderMB(el){
   </div>
   <div class="card">
     <div class="card-head">
-      <div class="search-box">${IC.search()}<input type="text" placeholder="Cari..." value="${_mbQ}" oninput="_mbQ=this.value;_renderMB(document.getElementById('mb-page'))"/></div>
+      <div class="search-box">${IC.search()}<input type="text" placeholder="Cari..." value="${_mbQ}" oninput="_mbQ=this.value;_renderMB(document.getElementById('page-content'))"/></div>
       <span class="text-sm text-gray">${data.length} bahan</span>
     </div>
     <div class="card-body-p0">
@@ -927,16 +923,16 @@ async function _saveMB(){
   try{
     await DataAPI.saveBahan({kode,nama,satuan:document.getElementById('mb-sat').value,harga_ref:+document.getElementById('mb-hrg').value,min_stock:+document.getElementById('mb-min').value,max_stock:+document.getElementById('mb-max').value,supplier:document.getElementById('mb-sup').value,status:'waiting',stock_current:0,created_by:Auth.user.username});
     Modal.close(); Toast.success('Bahan disubmit untuk approval');
-    _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('mb-page'));
+    _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
 }
-async function _mbApprove(id){await DataAPI.updateBahanStatus(id,'approved'); Toast.success('Bahan diapprove'); _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('mb-page'));}
-async function _mbReject(id){await DataAPI.updateBahanStatus(id,'rejected'); Toast.warning('Bahan direject'); _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('mb-page'));}
+async function _mbApprove(id){await DataAPI.updateBahanStatus(id,'approved'); Toast.success('Bahan diapprove'); _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));}
+async function _mbReject(id){await DataAPI.updateBahanStatus(id,'rejected'); Toast.warning('Bahan direject'); _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));}
 
 // ─── PAGE: MASTER MENU ───────────────────────────────────────
 let _mmData=[];
 async function pageMasterMenu(el){
-  el.id='mm-page'; _mmData=await DataAPI.getMenu().catch(()=>[]);
+  _mmData=await DataAPI.getMenu().catch(()=>[]);
   el.innerHTML=`
   <div class="page-head">
     <div><h2>Master Menu</h2><p>Daftar produk yang dijual</p></div>
@@ -965,11 +961,11 @@ function _openMM(){Modal.open({title:'Tambah Menu',body:`
 async function _saveMM(){
   const kode=document.getElementById('mm-kode').value.trim(); const nama=document.getElementById('mm-nama').value.trim(); const harga=+document.getElementById('mm-hrg').value;
   if(!kode||!nama||!harga){Toast.error('Semua field wajib');return;}
-  try{await DataAPI.saveMenu({kode,nama,kategori:document.getElementById('mm-kat').value,harga,status:'waiting',created_by:Auth.user.username}); Modal.close(); Toast.success('Menu disubmit'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('mm-page'));}
+  try{await DataAPI.saveMenu({kode,nama,kategori:document.getElementById('mm-kat').value,harga,status:'waiting',created_by:Auth.user.username}); Modal.close(); Toast.success('Menu disubmit'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
   catch(e){Toast.error(e.message);}
 }
-async function _mmApprove(id){await DataAPI.updateMenuStatus(id,'approved'); Toast.success('Menu diapprove'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('mm-page'));}
-async function _mmReject(id){await DataAPI.updateMenuStatus(id,'rejected'); Toast.warning('Menu direject'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('mm-page'));}
+async function _mmApprove(id){await DataAPI.updateMenuStatus(id,'approved'); Toast.success('Menu diapprove'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
+async function _mmReject(id){await DataAPI.updateMenuStatus(id,'rejected'); Toast.warning('Menu direject'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
 
 // ─── PAGE: RESEP ────────────────────────────────────────────
 async function pageResep(el){
@@ -1051,7 +1047,7 @@ async function pageAuditTrail(el){
 // ─── PAGE: USER MANAGEMENT ───────────────────────────────────
 let _usrData=[];
 async function pageUsers(el){
-  el.id='usr-page'; _usrData=await DataAPI.getUsers().catch(()=>[]);
+  _usrData=await DataAPI.getUsers().catch(()=>[]);
   _renderUsers(el);
 }
 function _renderUsers(el){
@@ -1084,12 +1080,12 @@ function _openUser(){Modal.open({title:'Tambah User',body:`
 async function _saveUser(){
   const nama=document.getElementById('u-nama').value.trim(); const uname=document.getElementById('u-uname').value.trim(); const pass=document.getElementById('u-pass').value;
   if(!nama||!uname||!pass){Toast.error('Semua field wajib');return;}
-  try{await DataAPI.saveUser({nama,username:uname,password:pass,role:document.getElementById('u-role').value,outlet:document.getElementById('u-outlet').value,status:'ACTIVE'}); Modal.close(); Toast.success('User ditambahkan'); _usrData=await DataAPI.getUsers().catch(()=>[]); _renderUsers(document.getElementById('usr-page'));}
+  try{await DataAPI.saveUser({nama,username:uname,password:pass,role:document.getElementById('u-role').value,outlet:document.getElementById('u-outlet').value,status:'ACTIVE'}); Modal.close(); Toast.success('User ditambahkan'); _usrData=await DataAPI.getUsers().catch(()=>[]); _renderUsers(document.getElementById('page-content'));}
   catch(e){Toast.error(e.message);}
 }
 async function _toggleUser(id,status){
   await DataAPI.updateUserStatus(id,status); Toast.success('Status user diubah');
-  _usrData=await DataAPI.getUsers().catch(()=>[]); _renderUsers(document.getElementById('usr-page'));
+  _usrData=await DataAPI.getUsers().catch(()=>[]); _renderUsers(document.getElementById('page-content'));
 }
 // ─── ROUTER ──────────────────────────────────────────────────
 const ROUTES = {
