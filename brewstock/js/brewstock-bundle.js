@@ -1119,6 +1119,7 @@ const NAV_USER_MOBILE = ['penjualan','stock','daily-report','master-bahan'];
 
 const App = {
   current: null,
+  _navToken: 0,
 
   async init() {
     Auth.init();
@@ -1178,9 +1179,27 @@ const App = {
 
     const content = document.getElementById('page-content');
     content.innerHTML = `<div class="empty-state" style="padding:60px">${IC.trend()} <p>Memuat...</p></div>`;
+
+    // Token guard: kalau user pindah menu lagi sebelum fetch halaman ini
+    // selesai, tulisan ke DOM dari fetch yang basi ini otomatis diabaikan
+    // (tidak menimpa halaman yang sedang aktif sekarang).
+    const token = ++this._navToken;
+    const guarded = new Proxy(content, {
+      set: (target, prop, value) => {
+        if (token !== App._navToken) return true; // stale, abaikan
+        target[prop] = value;
+        return true;
+      },
+      get: (target, prop) => {
+        const value = target[prop];
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+
     try {
-      await route.fn(content);
+      await route.fn(guarded);
     } catch(e) {
+      if (token !== this._navToken) return; // stale, jangan render error basi
       content.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">
         <p style="color:var(--red-600)">Error: ${e.message}</p>
         <small>Cek koneksi Supabase atau reload halaman</small>
