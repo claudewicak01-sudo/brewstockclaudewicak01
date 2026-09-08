@@ -1,16 +1,9 @@
 /**
- * BrewStock v2 — Konfigurasi
- * Ganti dengan nilai dari Supabase Dashboard > Settings > API
+ * BrewStock v2 — Bundle
+ * SUPABASE_URL, SUPABASE_KEY, dan APP_CONFIG sekarang datang dari js/config.js
+ * (dimuat SEBELUM file ini di index.html). Jangan hardcode key di sini lagi —
+ * ini yang tadinya bikin key lama "nyangkut" walau config.js sudah diupdate.
  */
-const SUPABASE_URL = 'https://crdabsztgartxbhwxwzm.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNyZGFic3p0Z2FydHhiaHd4d3ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3NDU5MjMsImV4cCI6MjEwNDMyMTkyM30.APsYeC9RJwTJY0eHFLBqLZd9dmTW4yxWqTT2UCBHjag';
-
-const APP_CONFIG = {
-  name: 'BrewStock',
-  version: '2.0.0',
-  variance_warning_pct: 5,
-  variance_critical_pct: 10,
-};
 // ─── DEMO MODE ───────────────────────────────────────────────
 const DEMO_MODE = (
   typeof SUPABASE_URL === 'undefined' ||
