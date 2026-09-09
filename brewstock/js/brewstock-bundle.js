@@ -878,6 +878,15 @@ function _renderPembelian(el){
     ],data:_pbData,empty:'Belum ada pembelian'})}
   </div></div>`;
 }
+// Konversi satuan beli -> satuan stok dasar. Misal beli 1 kg kopi -> stok
+// nambah 1000 gram (base satuan bahan tetap 'gram').
+const PB_UNIT_CONVERT = {
+  gram: [{v:'gram', f:1,    l:'gram'}, {v:'kg',    f:1000, l:'kg'}],
+  ml:   [{v:'ml',   f:1,    l:'ml'},   {v:'liter', f:1000, l:'liter'}],
+};
+function _pbUnitOptions(baseSatuan){
+  return PB_UNIT_CONVERT[baseSatuan] || [{v:baseSatuan, f:1, l:baseSatuan}];
+}
 function _openPembelian(){
   const approvedBahan = _pbBahan.filter(b=>b.status==='approved');
   Modal.open({title:'Input Pembelian',body:`
@@ -890,15 +899,18 @@ function _openPembelian(){
     </div>
     <div class="form-row cols-2">
       <div class="form-group">
-        <label>Qty<span class="req">*</span></label>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input id="pb-qty" type="number" min="1" placeholder="0" oninput="_onPbCalc()" style="flex:1"/>
-          <span id="pb-qty-unit" class="badge bg-gray" style="white-space:nowrap">— pilih bahan —</span>
+        <label>Jumlah Beli<span class="req">*</span></label>
+        <div style="display:flex;gap:8px">
+          <input id="pb-qty" type="number" min="0" step="any" placeholder="0" oninput="_onPbCalc()" style="flex:1"/>
+          <select id="pb-satuan-beli" onchange="_onPbCalc()" style="width:90px" disabled><option>—</option></select>
         </div>
       </div>
-      <div class="form-group"><label>Harga/satuan (Rp)<span class="req">*</span></label><input id="pb-hrg" type="number" oninput="_onPbCalc()"/></div>
+      <div class="form-group"><label id="pb-hrg-label">Harga/satuan dasar (Rp)<span class="req">*</span></label><input id="pb-hrg" type="number" oninput="_onPbCalc()"/></div>
     </div>
-    <div class="form-group"><label>Total</label><input id="pb-total" readonly/></div>
+    <div class="form-row cols-2">
+      <div class="form-group"><label>= Jumlah masuk stok</label><input id="pb-qty-base" readonly/></div>
+      <div class="form-group"><label>Total</label><input id="pb-total" readonly/></div>
+    </div>
     <div class="form-group"><label>Supplier</label><input id="pb-sup" placeholder="Nama supplier"/></div>`,
     footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_savePembelian()">Submit & Tambah Stok</button>`,
   });
@@ -906,22 +918,43 @@ function _openPembelian(){
 function _onPbBahan(){
   const s=document.getElementById('pb-bahan'); const o=s?.options[s?.selectedIndex];
   const hrgEl=document.getElementById('pb-hrg'); if(hrgEl && o?.dataset.h) hrgEl.value=o.dataset.h;
-  const unitEl=document.getElementById('pb-qty-unit');
-  if(unitEl) unitEl.textContent = o?.dataset.s ? o.dataset.s : '— pilih bahan —';
+  const baseSatuan = o?.dataset.s || '';
+  const unitSel = document.getElementById('pb-satuan-beli');
+  const opts = _pbUnitOptions(baseSatuan);
+  if (unitSel) {
+    unitSel.disabled = !baseSatuan;
+    unitSel.innerHTML = opts.map(u=>`<option value="${u.v}" data-f="${u.f}">${u.l}</option>`).join('');
+  }
+  const lbl=document.getElementById('pb-hrg-label'); if(lbl) lbl.textContent = baseSatuan ? `Harga per ${baseSatuan} (Rp)` : 'Harga/satuan dasar (Rp)';
   _onPbCalc();
 }
 function _onPbCalc(){
   const qty=+document.getElementById('pb-qty')?.value||0;
   const hrg=+document.getElementById('pb-hrg')?.value||0;
-  const el=document.getElementById('pb-total'); if(el) el.value=fmt.currency(qty*hrg);
+  const unitSel=document.getElementById('pb-satuan-beli');
+  const factor=+unitSel?.options[unitSel.selectedIndex]?.dataset.f || 1;
+  const qtyBase = qty*factor;
+  const baseEl=document.getElementById('pb-qty-base');
+  const s=document.getElementById('pb-bahan'); const baseSatuan=s?.options[s?.selectedIndex]?.dataset.s||'';
+  if (baseEl) baseEl.value = `${fmt.number(qtyBase)} ${baseSatuan}`;
+  const el=document.getElementById('pb-total'); if(el) el.value=fmt.currency(qtyBase*hrg);
 }
 async function _savePembelian(){
   const s=document.getElementById('pb-bahan'); const o=s.options[s.selectedIndex];
   const tgl=document.getElementById('pb-tgl').value;
-  const bahanId=+s.value; const qty=+document.getElementById('pb-qty').value; const hrg=+document.getElementById('pb-hrg').value;
-  if(!tgl||!bahanId||!qty||!hrg){Toast.error('Isi semua field wajib');return;}
+  const bahanId=+s.value;
+  const qtyInput=+document.getElementById('pb-qty').value;
+  const hrg=+document.getElementById('pb-hrg').value;
+  const unitSel=document.getElementById('pb-satuan-beli');
+  const unitOpt=unitSel?.options[unitSel.selectedIndex];
+  const factor=+unitOpt?.dataset.f||1;
+  const satuanBeli=unitOpt?.value||'';
+  const baseSatuan=o?.dataset.s||'';
+  const qtyBase=qtyInput*factor;
+  if(!tgl||!bahanId||!qtyInput||!hrg){Toast.error('Isi semua field wajib');return;}
   try{
-    await DataAPI.savePembelian({tanggal:tgl,bahan_id:bahanId,bahan_nama:o.dataset.n,satuan:o.dataset.s,qty,harga_satuan:hrg,total:qty*hrg,supplier:document.getElementById('pb-sup').value,created_by:Auth.user.username});
+    await DataAPI.savePembelian({tanggal:tgl,bahan_id:bahanId,bahan_nama:o.dataset.n,satuan:baseSatuan,qty:qtyBase,harga_satuan:hrg,total:qtyBase*hrg,supplier:document.getElementById('pb-sup').value,created_by:Auth.user.username});
+    await DataAPI.addAudit('Pembelian', `${o.dataset.n} ${fmt.number(qtyInput)}${satuanBeli} (= ${fmt.number(qtyBase)}${baseSatuan})`, 'Input');
     Modal.close(); Toast.success('Pembelian disimpan — stok bertambah otomatis');
     _pbData=await DataAPI.getPembelian().catch(()=>[]);
     const cont=document.getElementById('page-content'); if(cont) _renderPembelian(cont);
