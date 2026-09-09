@@ -962,6 +962,11 @@ async function _savePembelian(){
 }
 
 // ─── PAGE: REPORT ANALYSIS ────────────────────────────────────
+// Catatan: sengaja DICABUT dari ROUTES/NAV (bukan dihapus) — disiapkan
+// sebagai fitur tambahan berbayar. Untuk mengaktifkan lagi nanti, tinggal
+// tambahkan baris berikut ke ROUTES dan NAV_ADMIN:
+//   'report': { label:'Report Analysis', fn: pageReport, icon: IC.trend, admin: false },
+//   ...dan masukkan 'report' ke salah satu items array di NAV_ADMIN.
 const REP_ROW_DIMS = [
   {key:'menu_nama', label:'Menu'},
   {key:'shift',     label:'Shift'},
@@ -988,26 +993,26 @@ function _renderReportBuilder(el) {
         <div class="text-sm" style="font-weight:600;margin-bottom:8px">BARIS (Row Dimensions)</div>
         ${REP_ROW_DIMS.map(d=>`
           <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer">
-            <input type="checkbox" value="${d.key}" ${_repRowDims.includes(d.key)?'checked':''} onchange="_repToggleDim('${d.key}',this.checked)"/> ${d.label}
+            <input type="checkbox" value="${d.key}" ${_repRowDims.includes(d.key)?'checked':''} onchange="_repToggleDim('${d.key}',this.checked)" style="width:16px;height:16px;flex:none"/> ${d.label}
           </label>`).join('')}
       </div>
       <div>
         <div class="text-sm" style="font-weight:600;margin-bottom:8px">KOLOM (Periode)</div>
         ${REP_PERIODS.map(p=>`
           <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer">
-            <input type="radio" name="rep-period" value="${p.v}" ${_repPeriod===p.v?'checked':''} onchange="_repPeriod='${p.v}'"/> ${p.l}
+            <input type="radio" name="rep-period" value="${p.v}" ${_repPeriod===p.v?'checked':''} onchange="_repPeriod='${p.v}'" style="width:16px;height:16px;flex:none"/> ${p.l}
           </label>`).join('')}
         <div class="text-sm" style="font-weight:600;margin:14px 0 8px">NILAI</div>
         ${REP_VALUES.map(p=>`
           <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer">
-            <input type="radio" name="rep-value" value="${p.v}" ${_repValue===p.v?'checked':''} onchange="_repValue='${p.v}'"/> ${p.l}
+            <input type="radio" name="rep-value" value="${p.v}" ${_repValue===p.v?'checked':''} onchange="_repValue='${p.v}'" style="width:16px;height:16px;flex:none"/> ${p.l}
           </label>`).join('')}
       </div>
       <div>
         <div class="text-sm" style="font-weight:600;margin-bottom:8px">AGREGASI</div>
         ${REP_AGGS.map(p=>`
           <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer">
-            <input type="radio" name="rep-agg" value="${p.v}" ${_repAgg===p.v?'checked':''} onchange="_repAgg='${p.v}'"/> ${p.l}
+            <input type="radio" name="rep-agg" value="${p.v}" ${_repAgg===p.v?'checked':''} onchange="_repAgg='${p.v}'" style="width:16px;height:16px;flex:none"/> ${p.l}
           </label>`).join('')}
         <div class="text-sm" style="font-weight:600;margin:14px 0 8px">FILTER TANGGAL</div>
         <div style="display:flex;gap:8px">
@@ -1678,7 +1683,6 @@ const ROUTES = {
   'penjualan':    { label:'Penjualan',      fn: pagePenjualan,    icon: IC.sale,      admin: false },
   'stock':        { label:'Stok Bahan',     fn: pageStock,        icon: IC.stock,     admin: false },
   'pembelian':    { label:'Pembelian',      fn: pagePembelian,    icon: IC.beli,      admin: false },
-  'report':       { label:'Report Analysis',fn: pageReport,       icon: IC.trend,     admin: false },
   'daily-report': { label:'Daily Report',   fn: pageDailyReport,  icon: IC.report,    admin: false },
   'master-bahan': { label:'Master Bahan',   fn: pageMasterBahan,  icon: IC.bahan,     admin: false },
   'master-menu':  { label:'Master Menu',    fn: pageMasterMenu,   icon: IC.menu,      admin: false },
@@ -1693,7 +1697,7 @@ const ROUTES = {
 // Nav groups
 const NAV_ADMIN = [
   { group: null, items: ['dashboard'] },
-  { group: 'Operasional', items: ['penjualan','stock','pembelian','report','daily-report'] },
+  { group: 'Operasional', items: ['penjualan','stock','pembelian','daily-report'] },
   { group: 'Master Data', items: ['master-bahan','master-menu','resep'] },
   { group: 'Manajemen', items: ['audit-trail','users'] },
 ];
