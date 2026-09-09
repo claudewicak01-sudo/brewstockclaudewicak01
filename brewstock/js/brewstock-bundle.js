@@ -189,6 +189,13 @@ const DataAPI = {
     if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.message || res.statusText); }
     return res.json();
   },
+  async updateResepAktif(menuId, aktif) {
+    if (DEMO_MODE) { _DB.resep.filter(r=>r.menu_id===menuId).forEach(r=>r.aktif=aktif); return; }
+    const url = `${SUPABASE_URL}/rest/v1/resep?menu_id=eq.${menuId}`;
+    const res = await fetch(url,{method:'PATCH',headers:{...H(),'Prefer':'return=representation'},body:JSON.stringify({aktif})});
+    if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.message || res.statusText); }
+    return res.json();
+  },
 
   // PENJUALAN — saat input penjualan, stok dikurangi otomatis
   async getPenjualan() {
@@ -428,6 +435,7 @@ const IC = {
   img:    ()=>IC.svg('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>'),
   trend:  ()=>IC.svg('<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>'),
   beli:   ()=>IC.svg('<path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>'),
+  download: ()=>IC.svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>'),
 };
 
 // ─── TOAST ───────────────────────────────────────────────────
@@ -472,6 +480,25 @@ function searchFilter(data, q, keys) {
   if (!q) return data;
   const lq = q.toLowerCase();
   return data.filter(r=>keys.some(k=>String(r[k]||'').toLowerCase().includes(lq)));
+}
+
+// ─── EXPORT EXCEL (CSV) ────────────────────────────────────────
+// Pakai format CSV ber-delimiter ";" (default separator Excel versi Indonesia)
+// + BOM UTF-8, biar bisa langsung dibuka Excel tanpa perlu import wizard.
+function _exportCSV(filename, headers, rows){
+  const esc = v => {
+    const s = String(v ?? '');
+    return /[";\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+  };
+  const lines = [headers.map(esc).join(';'), ...rows.map(r=>r.map(esc).join(';'))];
+  const csv = '\uFEFF' + lines.join('\r\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  Toast.success('File Excel (CSV) diunduh');
 }
 
 // ─── MINI CHARTS (SVG) ───────────────────────────────────────
@@ -685,7 +712,10 @@ function _renderPenjualan(el,q) {
   el.innerHTML=`
   <div class="page-head">
     <div><h2>Input Penjualan</h2><p>Stok bahan otomatis berkurang sesuai resep saat penjualan diinput</p></div>
-    <button class="btn btn-primary" onclick="_openPenjualan()">${IC.plus()} Input Penjualan</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost" onclick="_exportPenjualan()">${IC.download()} Export Excel</button>
+      <button class="btn btn-primary" onclick="_openPenjualan()">${IC.plus()} Input Penjualan</button>
+    </div>
   </div>
   <div class="kpi-grid" style="max-width:500px;margin-bottom:16px">
     <div class="kpi-card"><div class="kpi-label">Revenue Hari Ini</div><div class="kpi-val">${fmt.currency(todayTotal)}</div></div>
@@ -738,6 +768,13 @@ function _renderPenjualan(el,q) {
   </div>`;
   }
 function _pjGoPage(p){ _pjPage=p; _renderPenjualan(document.getElementById('page-content'),_pjQ); }
+function _exportPenjualan(){
+  const data = _pjFiltered();
+  _exportCSV('penjualan.csv',
+    ['Tanggal','Shift','Menu','Qty','Total','Metode','Oleh','Status'],
+    data.map(r=>[r.tanggal,r.shift,r.menu_nama,r.qty,r.total,r.metode,r.created_by,r.void_status||'Aktif'])
+  );
+}
 
 async function _pjVoidRequest(id){
   const reason = prompt('Alasan void transaksi ini?');
@@ -767,7 +804,7 @@ async function _pjVoidReject(id){
 }
 
 function _openPenjualan() {
-  const approvedMenu = _pjMenu.filter(m=>m.status==='approved');
+  const approvedMenu = _pjMenu.filter(m=>m.status==='approved'&&m.aktif!==false);
   let _selMenu=null;
   Modal.open({
     title:'Input Penjualan',
@@ -836,7 +873,10 @@ async function pageStock(el) {
   const usage=DataAPI.computeUsage(penjualan,resep,today);
 
   el.innerHTML=`
-  <div class="page-head"><div><h2>Stok Bahan</h2><p>Saldo stok sistem berdasarkan pembelian dikurangi penjualan</p></div></div>
+  <div class="page-head">
+    <div><h2>Stok Bahan</h2><p>Saldo stok sistem berdasarkan pembelian dikurangi penjualan</p></div>
+    <button class="btn btn-ghost" onclick="_exportStock()">${IC.download()} Export Excel</button>
+  </div>
   <div class="card">
     <div class="card-head"><span class="card-title">${IC.bahan()} Saldo Stok Saat Ini</span></div>
     <div class="card-body-p0">
@@ -854,6 +894,18 @@ async function pageStock(el) {
       ],data:bahan.filter(b=>b.status==='approved'),empty:'Tidak ada bahan aktif'})}
     </div>
   </div>`;
+  window._stockExportData = { bahan: bahan.filter(b=>b.status==='approved'), usage };
+}
+function _exportStock(){
+  const { bahan, usage } = window._stockExportData || { bahan:[], usage:[] };
+  _exportCSV('stok-bahan.csv',
+    ['Kode','Bahan','Satuan','Stok Sistem','Min Stock','Max Stock','Terpakai Hari Ini','Status'],
+    bahan.map(r=>{
+      const u=usage.find(x=>x.bahan_id===r.id);
+      const status = r.stock_current<=r.min_stock?'Critical':r.stock_current<=r.min_stock*1.5?'Warning':'Normal';
+      return [r.kode,r.nama,r.satuan,r.stock_current,r.min_stock,r.max_stock,u?.total_used||0,status];
+    })
+  );
 }
 
 // ─── PAGE: PEMBELIAN ──────────────────────────────────────────
@@ -866,7 +918,10 @@ function _renderPembelian(el){
   el.innerHTML=`
   <div class="page-head">
     <div><h2>Pembelian</h2><p>Input pembelian bahan baku — stok otomatis bertambah</p></div>
-    <button class="btn btn-primary" onclick="_openPembelian()">${IC.plus()} Input Pembelian</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost" onclick="_exportPembelian()">${IC.download()} Export Excel</button>
+      <button class="btn btn-primary" onclick="_openPembelian()">${IC.plus()} Input Pembelian</button>
+    </div>
   </div>
   <div class="card"><div class="card-body-p0">
     ${buildTable({cols:[
@@ -878,6 +933,12 @@ function _renderPembelian(el){
     ],data:_pbData,empty:'Belum ada pembelian'})}
   </div></div>`;
 }
+function _exportPembelian(){
+  _exportCSV('pembelian.csv',
+    ['Tanggal','Bahan','Qty','Satuan','Harga/Satuan','Total','Supplier','Oleh'],
+    _pbData.map(r=>[r.tanggal,r.bahan_nama,r.qty,r.satuan,r.harga_satuan,r.total,r.supplier,r.created_by])
+  );
+}
 // Konversi satuan beli -> satuan stok dasar. Misal beli 1 kg kopi -> stok
 // nambah 1000 gram (base satuan bahan tetap 'gram').
 const PB_UNIT_CONVERT = {
@@ -888,13 +949,13 @@ function _pbUnitOptions(baseSatuan){
   return PB_UNIT_CONVERT[baseSatuan] || [{v:baseSatuan, f:1, l:baseSatuan}];
 }
 function _openPembelian(){
-  const approvedBahan = _pbBahan.filter(b=>b.status==='approved');
+  const approvedBahan = _pbBahan.filter(b=>b.status==='approved'&&b.aktif!==false);
   Modal.open({title:'Input Pembelian',body:`
     <div class="form-row cols-2">
       <div class="form-group"><label>Tanggal<span class="req">*</span></label><input id="pb-tgl" type="date" value="${new Date().toISOString().split('T')[0]}"/></div>
       <div class="form-group"><label>Bahan<span class="req">*</span></label>
         <select id="pb-bahan" onchange="_onPbBahan()"><option value="">— Pilih Bahan —</option>
-          ${approvedBahan.map(b=>`<option value="${b.id}" data-h="${b.harga_ref}" data-n="${b.nama}" data-s="${b.satuan}">${b.nama} (${b.satuan})</option>`).join('')}
+          ${approvedBahan.map(b=>`<option value="${b.id}" data-n="${b.nama}" data-s="${b.satuan}">${b.nama} (${b.satuan})</option>`).join('')}
         </select></div>
     </div>
     <div class="form-row cols-2">
@@ -905,19 +966,15 @@ function _openPembelian(){
           <select id="pb-satuan-beli" onchange="_onPbCalc()" style="width:90px" disabled><option>—</option></select>
         </div>
       </div>
-      <div class="form-group"><label id="pb-hrg-label">Harga/satuan dasar (Rp)<span class="req">*</span></label><input id="pb-hrg" type="number" oninput="_onPbCalc()"/></div>
+      <div class="form-group"><label>Harga (Rp)<span class="req">*</span></label><input id="pb-hrg" type="number" placeholder="Total harga beli"/></div>
     </div>
-    <div class="form-row cols-2">
-      <div class="form-group"><label>= Jumlah masuk stok</label><input id="pb-qty-base" readonly/></div>
-      <div class="form-group"><label>Total</label><input id="pb-total" readonly/></div>
-    </div>
+    <div class="form-group"><label>= Jumlah masuk stok</label><input id="pb-qty-base" readonly/></div>
     <div class="form-group"><label>Supplier</label><input id="pb-sup" placeholder="Nama supplier"/></div>`,
     footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_savePembelian()">Submit & Tambah Stok</button>`,
   });
 }
 function _onPbBahan(){
   const s=document.getElementById('pb-bahan'); const o=s?.options[s?.selectedIndex];
-  const hrgEl=document.getElementById('pb-hrg'); if(hrgEl && o?.dataset.h) hrgEl.value=o.dataset.h;
   const baseSatuan = o?.dataset.s || '';
   const unitSel = document.getElementById('pb-satuan-beli');
   const opts = _pbUnitOptions(baseSatuan);
@@ -925,35 +982,32 @@ function _onPbBahan(){
     unitSel.disabled = !baseSatuan;
     unitSel.innerHTML = opts.map(u=>`<option value="${u.v}" data-f="${u.f}">${u.l}</option>`).join('');
   }
-  const lbl=document.getElementById('pb-hrg-label'); if(lbl) lbl.textContent = baseSatuan ? `Harga per ${baseSatuan} (Rp)` : 'Harga/satuan dasar (Rp)';
   _onPbCalc();
 }
 function _onPbCalc(){
   const qty=+document.getElementById('pb-qty')?.value||0;
-  const hrg=+document.getElementById('pb-hrg')?.value||0;
   const unitSel=document.getElementById('pb-satuan-beli');
   const factor=+unitSel?.options[unitSel.selectedIndex]?.dataset.f || 1;
   const qtyBase = qty*factor;
   const baseEl=document.getElementById('pb-qty-base');
   const s=document.getElementById('pb-bahan'); const baseSatuan=s?.options[s?.selectedIndex]?.dataset.s||'';
   if (baseEl) baseEl.value = `${fmt.number(qtyBase)} ${baseSatuan}`;
-  const el=document.getElementById('pb-total'); if(el) el.value=fmt.currency(qtyBase*hrg);
 }
 async function _savePembelian(){
   const s=document.getElementById('pb-bahan'); const o=s.options[s.selectedIndex];
   const tgl=document.getElementById('pb-tgl').value;
   const bahanId=+s.value;
   const qtyInput=+document.getElementById('pb-qty').value;
-  const hrg=+document.getElementById('pb-hrg').value;
+  const hrgTotal=+document.getElementById('pb-hrg').value;
   const unitSel=document.getElementById('pb-satuan-beli');
   const unitOpt=unitSel?.options[unitSel.selectedIndex];
   const factor=+unitOpt?.dataset.f||1;
   const satuanBeli=unitOpt?.value||'';
   const baseSatuan=o?.dataset.s||'';
   const qtyBase=qtyInput*factor;
-  if(!tgl||!bahanId||!qtyInput||!hrg){Toast.error('Isi semua field wajib');return;}
+  if(!tgl||!bahanId||!qtyInput||!hrgTotal){Toast.error('Isi semua field wajib');return;}
   try{
-    await DataAPI.savePembelian({tanggal:tgl,bahan_id:bahanId,bahan_nama:o.dataset.n,satuan:baseSatuan,qty:qtyBase,harga_satuan:hrg,total:qtyBase*hrg,supplier:document.getElementById('pb-sup').value,created_by:Auth.user.username});
+    await DataAPI.savePembelian({tanggal:tgl,bahan_id:bahanId,bahan_nama:o.dataset.n,satuan:baseSatuan,qty:qtyBase,harga_satuan:qtyBase?Math.round(hrgTotal/qtyBase):0,total:hrgTotal,supplier:document.getElementById('pb-sup').value,created_by:Auth.user.username});
     await DataAPI.addAudit('Pembelian', `${o.dataset.n} ${fmt.number(qtyInput)}${satuanBeli} (= ${fmt.number(qtyBase)}${baseSatuan})`, 'Input');
     Modal.close(); Toast.success('Pembelian disimpan — stok bertambah otomatis');
     _pbData=await DataAPI.getPembelian().catch(()=>[]);
@@ -1219,7 +1273,10 @@ function _renderDR(el){
   el.innerHTML=`
   <div class="page-head">
     <div><h2>Daily Report</h2><p>Laporan kas harian — rekonsiliasi tunai vs non-tunai</p></div>
-    <button class="btn btn-primary" onclick="_openDR()">${IC.plus()} Input Report</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost" onclick="_exportDR()">${IC.download()} Export Excel</button>
+      <button class="btn btn-primary" onclick="_openDR()">${IC.plus()} Input Report</button>
+    </div>
   </div>
   <div class="card">
     <div class="card-body-p0">
@@ -1243,6 +1300,12 @@ function _renderDR(el){
     </div>
   </div>`;
   }
+function _exportDR(){
+  _exportCSV('daily-report.csv',
+    ['Tanggal','User','Shift','Total Sales','Cash','Non-Cash','Variance','Status'],
+    _drData.map(r=>[r.tanggal,r.user,r.shift,r.total_sales,r.cash,(r.qris||0)+(r.debit||0)+(r.credit||0)+(r.ewallet||0),r.variance,r.void_status||(r.variance===0?'Approved':'Warning')])
+  );
+}
 async function _drVoidRequest(id){
   const reason = prompt('Alasan void daily report ini?');
   if (reason===null) return;
@@ -1349,9 +1412,9 @@ function _renderMB(el){
         {key:'kode',label:'Kode'},{key:'nama',label:'Nama'},{key:'satuan',label:'Satuan'},
         {label:'Stok',render:r=>`<span class="font-mono">${fmt.number(r.stock_current||0)}</span>`},
         {label:'Min',render:r=>`<span class="font-mono">${fmt.number(r.min_stock)}</span>`},
-        {label:'Harga/sat',render:r=>fmt.currency(r.harga_ref)},
         {key:'supplier',label:'Supplier'},
         {label:'Status',render:r=>badge(r.status)},
+        {label:'Aktif',render:r=>`<input type="checkbox" ${r.aktif!==false?'checked':''} ${Auth.isAdmin()?`onchange="_mbToggleAktif(${r.id},this.checked)"`:'disabled'} style="width:18px;height:18px"/>`},
         {label:'',render:r=>`<div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn btn-ghost btn-sm" onclick="_openMBEdit(${r.id})">Edit</button>
           ${Auth.isAdmin()&&r.status==='waiting'?`<button class="btn btn-success btn-sm" onclick="_mbApprove(${r.id})">Approve</button><button class="btn btn-danger btn-sm" onclick="_mbReject(${r.id})">Reject</button>`:''}
@@ -1359,6 +1422,11 @@ function _renderMB(el){
       ],data,empty:'Belum ada bahan'})}
     </div>
   </div>`;
+}
+async function _mbToggleAktif(id,aktif){
+  try{ await DataAPI.updateBahan(id,{aktif}); Toast.success(aktif?'Bahan diaktifkan':'Bahan dinonaktifkan');
+    _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));
+  }catch(e){Toast.error(e.message);}
 }
 function _openMB(){
   const kode=_nextKode(_mbData,'BB');
@@ -1369,13 +1437,12 @@ function _openMB(){
   </div>
   <div class="form-row cols-2">
     <div class="form-group"><label>Satuan<span class="req">*</span></label><select id="mb-sat"><option>gram</option><option>ml</option><option>pcs</option><option>kg</option><option>liter</option></select></div>
-    <div class="form-group"><label>Harga/satuan (Rp)</label><input id="mb-hrg" type="number" value="0"/></div>
+    <div class="form-group"><label>Min Stock</label><input id="mb-min" type="number" value="500"/></div>
   </div>
   <div class="form-row cols-2">
-    <div class="form-group"><label>Min Stock</label><input id="mb-min" type="number" value="500"/></div>
     <div class="form-group"><label>Max Stock</label><input id="mb-max" type="number" value="5000"/></div>
-  </div>
-  <div class="form-group"><label>Supplier</label><input id="mb-sup" placeholder="Nama supplier"/></div>`,
+    <div class="form-group"><label>Supplier</label><input id="mb-sup" placeholder="Nama supplier"/></div>
+  </div>`,
   footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_saveMB()">Submit untuk Approval</button>`,
 });}
 async function _saveMB(){
@@ -1383,7 +1450,7 @@ async function _saveMB(){
   const nama=document.getElementById('mb-nama').value.trim();
   if(!kode||!nama){Toast.error('Kode dan nama wajib');return;}
   try{
-    await DataAPI.saveBahan({kode,nama,satuan:document.getElementById('mb-sat').value,harga_ref:+document.getElementById('mb-hrg').value,min_stock:+document.getElementById('mb-min').value,max_stock:+document.getElementById('mb-max').value,supplier:document.getElementById('mb-sup').value,status:'waiting',stock_current:0,created_by:Auth.user.username});
+    await DataAPI.saveBahan({kode,nama,satuan:document.getElementById('mb-sat').value,min_stock:+document.getElementById('mb-min').value,max_stock:+document.getElementById('mb-max').value,supplier:document.getElementById('mb-sup').value,status:'waiting',aktif:true,stock_current:0,created_by:Auth.user.username});
     Modal.close(); Toast.success('Bahan disubmit untuk approval');
     _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
@@ -1400,13 +1467,12 @@ function _openMBEdit(id){
   </div>
   <div class="form-row cols-2">
     <div class="form-group"><label>Satuan<span class="req">*</span></label><select id="mb-e-sat">${['gram','ml','pcs','kg','liter'].map(s=>`<option ${s===b.satuan?'selected':''}>${s}</option>`).join('')}</select></div>
-    <div class="form-group"><label>Harga/satuan (Rp)</label><input id="mb-e-hrg" type="number" value="${b.harga_ref}"/></div>
+    <div class="form-group"><label>Min Stock</label><input id="mb-e-min" type="number" value="${b.min_stock}"/></div>
   </div>
   <div class="form-row cols-2">
-    <div class="form-group"><label>Min Stock</label><input id="mb-e-min" type="number" value="${b.min_stock}"/></div>
     <div class="form-group"><label>Max Stock</label><input id="mb-e-max" type="number" value="${b.max_stock}"/></div>
+    <div class="form-group"><label>Supplier</label><input id="mb-e-sup" value="${(b.supplier||'').replace(/"/g,'&quot;')}"/></div>
   </div>
-  <div class="form-group"><label>Supplier</label><input id="mb-e-sup" value="${(b.supplier||'').replace(/"/g,'&quot;')}"/></div>
   <p class="text-sm text-gray">Perubahan akan berstatus <b>menunggu approval admin</b>. Selama menunggu, bahan ini tidak akan muncul di pilihan resep/pembelian.</p>`,
   footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_saveMBEdit(${id})">Submit Perubahan</button>`,
   });
@@ -1415,7 +1481,7 @@ async function _saveMBEdit(id){
   const nama=document.getElementById('mb-e-nama').value.trim();
   if(!nama){Toast.error('Nama wajib');return;}
   try{
-    await DataAPI.updateBahan(id,{nama,satuan:document.getElementById('mb-e-sat').value,harga_ref:+document.getElementById('mb-e-hrg').value,min_stock:+document.getElementById('mb-e-min').value,max_stock:+document.getElementById('mb-e-max').value,supplier:document.getElementById('mb-e-sup').value,status:'waiting'});
+    await DataAPI.updateBahan(id,{nama,satuan:document.getElementById('mb-e-sat').value,min_stock:+document.getElementById('mb-e-min').value,max_stock:+document.getElementById('mb-e-max').value,supplier:document.getElementById('mb-e-sup').value,status:'waiting'});
     await DataAPI.addAudit('Bahan',nama,'Edit (menunggu approval)');
     Modal.close(); Toast.success('Perubahan disubmit untuk approval');
     _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));
@@ -1436,12 +1502,18 @@ async function pageMasterMenu(el){
       {key:'kode',label:'Kode'},{key:'nama',label:'Menu'},{key:'kategori',label:'Kategori'},
       {label:'Harga',render:r=>fmt.currency(r.harga)},
       {label:'Status',render:r=>badge(r.status)},
+      {label:'Aktif',render:r=>`<input type="checkbox" ${r.aktif!==false?'checked':''} ${Auth.isAdmin()?`onchange="_mmToggleAktif(${r.id},this.checked)"`:'disabled'} style="width:18px;height:18px"/>`},
       {label:'',render:r=>`<div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" onclick="_openMMEdit(${r.id})">Edit</button>
         ${Auth.isAdmin()&&r.status==='waiting'?`<button class="btn btn-success btn-sm" onclick="_mmApprove(${r.id})">Approve</button><button class="btn btn-danger btn-sm" onclick="_mmReject(${r.id})">Reject</button>`:''}
       </div>`},
     ],data:_mmData,empty:'Belum ada menu'})}
   </div></div>`;
+}
+async function _mmToggleAktif(id,aktif){
+  try{ await DataAPI.updateMenu(id,{aktif}); Toast.success(aktif?'Menu diaktifkan':'Menu dinonaktifkan');
+    _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));
+  }catch(e){Toast.error(e.message);}
 }
 function _openMM(){
   const kode=_nextKode(_mmData,'MN');
@@ -1459,7 +1531,7 @@ function _openMM(){
 async function _saveMM(){
   const kode=document.getElementById('mm-kode').value.trim(); const nama=document.getElementById('mm-nama').value.trim(); const harga=+document.getElementById('mm-hrg').value;
   if(!kode||!nama||!harga){Toast.error('Semua field wajib');return;}
-  try{await DataAPI.saveMenu({kode,nama,kategori:document.getElementById('mm-kat').value,harga,status:'waiting',created_by:Auth.user.username}); Modal.close(); Toast.success('Menu disubmit'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
+  try{await DataAPI.saveMenu({kode,nama,kategori:document.getElementById('mm-kat').value,harga,status:'waiting',aktif:true,created_by:Auth.user.username}); Modal.close(); Toast.success('Menu disubmit'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
   catch(e){Toast.error(e.message);}
 }
 async function _mmApprove(id){await DataAPI.updateMenuStatus(id,'approved'); Toast.success('Menu diapprove'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
@@ -1498,8 +1570,8 @@ async function pageResep(el){
   const byMenu={};
   resep.forEach(r=>{if(!byMenu[r.menu_nama])byMenu[r.menu_nama]=[];byMenu[r.menu_nama].push(r);});
   _rpLastResep=resep;
-  _rpMenus=menu.filter(m=>m.status==='approved');
-  _rpBahans=bahan.filter(b=>b.status==='approved');
+  _rpMenus=menu.filter(m=>m.status==='approved'&&m.aktif!==false);
+  _rpBahans=bahan.filter(b=>b.status==='approved'&&b.aktif!==false);
 
   el.innerHTML=`
   <div class="page-head">
@@ -1509,11 +1581,15 @@ async function pageResep(el){
   ${Object.keys(byMenu).length?Object.entries(byMenu).map(([nama,lines])=>{
     const status = lines[0]?.status || 'approved';
     const menuId = lines[0]?.menu_id;
+    const aktif = lines[0]?.aktif !== false;
     return `
     <div class="card mb-4">
       <div class="card-head">
         <span class="card-title">${IC.menu()} ${nama} ${badge(status)}</span>
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:12px;align-items:center">
+          <label style="display:flex;align-items:center;gap:6px;cursor:${Auth.isAdmin()?'pointer':'default'}" class="text-sm">
+            <input type="checkbox" ${aktif?'checked':''} ${Auth.isAdmin()?`onchange="_rpToggleAktif(${menuId},this.checked)"`:'disabled'} style="width:18px;height:18px"/> Aktif
+          </label>
           <button class="btn btn-ghost btn-sm" onclick='_openResepEdit(${menuId},"${nama.replace(/"/g,'&quot;')}")'>Edit</button>
           ${Auth.isAdmin()&&status==='waiting'?`<button class="btn btn-success btn-sm" onclick="_rpApprove(${menuId})">Approve</button><button class="btn btn-danger btn-sm" onclick="_rpReject(${menuId})">Reject</button>`:''}
         </div>
@@ -1526,6 +1602,10 @@ async function pageResep(el){
 }
 async function _rpApprove(menuId){await DataAPI.updateResepStatus(menuId,'approved'); Toast.success('Resep diapprove'); App.go('resep');}
 async function _rpReject(menuId){await DataAPI.updateResepStatus(menuId,'rejected'); Toast.warning('Resep direject'); App.go('resep');}
+async function _rpToggleAktif(menuId,aktif){
+  try{ await DataAPI.updateResepAktif(menuId,aktif); Toast.success(aktif?'Resep diaktifkan':'Resep dinonaktifkan'); App.go('resep'); }
+  catch(e){Toast.error(e.message);}
+}
 
 function _openResep(){
   const menus=_rpMenus, bahans=_rpBahans;
@@ -1591,7 +1671,7 @@ function _collectResepLines(menuId,menuNama){
   return [...document.querySelectorAll('#rp-lines > [id^=rp-line-]')].map(row=>{
     const b=row.querySelector('.rp-bahan'); const q=row.querySelector('.rp-qty'); const s=row.querySelector('.rp-sat');
     if(!b?.value||!q?.value)return null;
-    return{menu_id:menuId,menu_nama:menuNama,bahan_id:+b.value,bahan_nama:b.options[b.selectedIndex]?.text,qty:+q.value,satuan:s?.value||'',status:'waiting',created_by:Auth.user.username};
+    return{menu_id:menuId,menu_nama:menuNama,bahan_id:+b.value,bahan_nama:b.options[b.selectedIndex]?.text,qty:+q.value,satuan:s?.value||'',status:'waiting',aktif:true,created_by:Auth.user.username};
   }).filter(Boolean);
 }
 async function _saveResep(){
