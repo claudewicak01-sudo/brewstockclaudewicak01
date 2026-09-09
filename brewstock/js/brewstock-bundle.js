@@ -729,7 +729,7 @@ function _renderPenjualan(el,q) {
         <input type="date" value="${_pjFil.sampai}" onchange="_pjSetFil('sampai',this.value)" title="Sampai tanggal" style="width:140px"/>
         <select onchange="_pjSetFil('shift',this.value)" style="width:110px">
           <option value="">Semua Shift</option>
-          ${['Pagi','Siang','Malam'].map(s=>`<option ${s===_pjFil.shift?'selected':''}>${s}</option>`).join('')}
+          ${['Pagi','Siang','Malam','Long Shift'].map(s=>`<option ${s===_pjFil.shift?'selected':''}>${s}</option>`).join('')}
         </select>
         <select onchange="_pjSetFil('metode',this.value)" style="width:120px">
           <option value="">Semua Metode</option>
@@ -746,15 +746,18 @@ function _renderPenjualan(el,q) {
         {label:'Qty',render:r=>`<b>${r.qty}</b>`},
         {label:'Total',render:r=>`<span class="font-mono">${fmt.currency(r.total)}</span>`},
         {key:'metode',label:'Metode'},{key:'created_by',label:'Oleh'},
-        {label:'Status',render:r=>r.void_status?badge(r.void_status):''},
-        {label:'',render:r=>{
-          if (r.void_status==='voided') return '';
-          if (r.void_status==='pending') {
-            return Auth.isAdmin()
-              ? `<div style="display:flex;gap:6px"><button class="btn btn-success btn-sm" onclick="_pjVoidApprove(${r.id})">Approve Void</button><button class="btn btn-danger btn-sm" onclick="_pjVoidReject(${r.id})">Reject</button></div>`
+        {label:'Status',render:r=>{
+          const statusHtml = r.void_status ? badge(r.void_status) : '';
+          let actionHtml = '';
+          if (r.void_status==='voided') actionHtml='';
+          else if (r.void_status==='pending') {
+            actionHtml = Auth.isAdmin()
+              ? `<button class="btn btn-success btn-sm" onclick="_pjVoidApprove(${r.id})">Approve</button><button class="btn btn-danger btn-sm" onclick="_pjVoidReject(${r.id})">Reject</button>`
               : `<span class="text-sm text-gray">Menunggu admin</span>`;
+          } else {
+            actionHtml = `<button class="btn btn-ghost btn-sm" onclick="_pjVoidRequest(${r.id})">Void</button>`;
           }
-          return `<button class="btn btn-ghost btn-sm" onclick="_pjVoidRequest(${r.id})">Void</button>`;
+          return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${statusHtml}${actionHtml}</div>`;
         }},
       ],data:pageData,empty:'Belum ada penjualan'})}
     </div>
@@ -811,7 +814,7 @@ function _openPenjualan() {
     body:`
     <div class="form-row cols-2">
       <div class="form-group"><label>Tanggal<span class="req">*</span></label><input id="pj-tgl" type="date" value="${new Date().toISOString().split('T')[0]}"/></div>
-      <div class="form-group"><label>Shift<span class="req">*</span></label><select id="pj-shift"><option>Pagi</option><option>Siang</option><option>Malam</option></select></div>
+      <div class="form-group"><label>Shift<span class="req">*</span></label><select id="pj-shift"><option>Pagi</option><option>Siang</option><option>Malam</option><option>Long Shift</option></select></div>
     </div>
     <div class="form-group"><label>Menu<span class="req">*</span></label>
       <select id="pj-menu" onchange="_onPjMenu()"><option value="">— Pilih Menu —</option>
@@ -968,7 +971,7 @@ function _openPembelian(){
       </div>
       <div class="form-group"><label>Harga (Rp)<span class="req">*</span></label><input id="pb-hrg" type="number" placeholder="Total harga beli"/></div>
     </div>
-    <div class="form-group"><label>= Jumlah masuk stok</label><input id="pb-qty-base" readonly/></div>
+    <div class="form-group"><label>Jumlah Masuk ke Stok (hasil konversi satuan)</label><input id="pb-qty-base" readonly/></div>
     <div class="form-group"><label>Supplier</label><input id="pb-sup" placeholder="Nama supplier"/></div>`,
     footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_savePembelian()">Submit & Tambah Stok</button>`,
   });
@@ -1264,15 +1267,18 @@ async function _saveOpname(){
 }
 
 // ─── PAGE: DAILY REPORT ─────────────────────────────────────
-let _drData=[], _drFoto=null;
+let _drData=[], _drFoto=null, _drPenjualan=[];
 async function pageDailyReport(el) {
-  _drData=await DataAPI.getDailyReport().catch(()=>[]);
+  [_drData,_drPenjualan] = await Promise.all([
+    DataAPI.getDailyReport().catch(()=>[]),
+    DataAPI.getPenjualan().catch(()=>[]).then(d=>d.filter(p=>p.void_status!=='voided')),
+  ]);
   _renderDR(el);
 }
 function _renderDR(el){
   el.innerHTML=`
   <div class="page-head">
-    <div><h2>Daily Report</h2><p>Laporan kas harian — rekonsiliasi tunai vs non-tunai</p></div>
+    <div><h2>Daily Report</h2><p>Laporan kas harian — rekonsiliasi total sistem (Penjualan) vs total aktual</p></div>
     <div style="display:flex;gap:8px">
       <button class="btn btn-ghost" onclick="_exportDR()">${IC.download()} Export Excel</button>
       <button class="btn btn-primary" onclick="_openDR()">${IC.plus()} Input Report</button>
@@ -1282,19 +1288,21 @@ function _renderDR(el){
     <div class="card-body-p0">
       ${buildTable({cols:[
         {key:'tanggal',label:'Tanggal'},{key:'user',label:'User'},{key:'shift',label:'Shift'},
-        {label:'Total Sales',render:r=>`<strong class="font-mono">${fmt.currency(r.total_sales)}</strong>`},
-        {label:'Cash',render:r=>fmt.currency(r.cash)},
-        {label:'Non-Cash',render:r=>fmt.currency((r.qris||0)+(r.debit||0)+(r.credit||0)+(r.ewallet||0))},
+        {label:'Total Sistem',render:r=>`<strong class="font-mono">${fmt.currency(r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0)))}</strong>`},
+        {label:'Total Aktual',render:r=>fmt.currency(r.total_sales)},
         {label:'Variance',render:r=>`<span class="font-mono" style="color:${r.variance!==0?'var(--red-600)':'var(--green-600)'}">${r.variance>=0?'+':''}${fmt.currency(r.variance)}</span>`},
-        {label:'Status',render:r=>r.void_status?badge(r.void_status):(r.variance===0?badge('approved'):badge('warning'))},
-        {label:'',render:r=>{
-          if (r.void_status==='voided') return '';
-          if (r.void_status==='pending') {
-            return Auth.isAdmin()
-              ? `<div style="display:flex;gap:6px"><button class="btn btn-success btn-sm" onclick="_drVoidApprove(${r.id})">Approve Void</button><button class="btn btn-danger btn-sm" onclick="_drVoidReject(${r.id})">Reject</button></div>`
+        {label:'Status',render:r=>{
+          const statusHtml = r.void_status ? badge(r.void_status) : (r.variance===0?badge('approved'):badge('warning'));
+          let actionHtml = '';
+          if (r.void_status==='voided') actionHtml='';
+          else if (r.void_status==='pending') {
+            actionHtml = Auth.isAdmin()
+              ? `<button class="btn btn-success btn-sm" onclick="_drVoidApprove(${r.id})">Approve</button><button class="btn btn-danger btn-sm" onclick="_drVoidReject(${r.id})">Reject</button>`
               : `<span class="text-sm text-gray">Menunggu admin</span>`;
+          } else {
+            actionHtml = `<button class="btn btn-ghost btn-sm" onclick="_drVoidRequest(${r.id})">Void</button>`;
           }
-          return `<button class="btn btn-ghost btn-sm" onclick="_drVoidRequest(${r.id})">Void</button>`;
+          return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${statusHtml}${actionHtml}</div>`;
         }},
       ],data:_drData,empty:'Belum ada daily report'})}
     </div>
@@ -1302,8 +1310,8 @@ function _renderDR(el){
   }
 function _exportDR(){
   _exportCSV('daily-report.csv',
-    ['Tanggal','User','Shift','Total Sales','Cash','Non-Cash','Variance','Status'],
-    _drData.map(r=>[r.tanggal,r.user,r.shift,r.total_sales,r.cash,(r.qris||0)+(r.debit||0)+(r.credit||0)+(r.ewallet||0),r.variance,r.void_status||(r.variance===0?'Approved':'Warning')])
+    ['Tanggal','User','Shift','Total Sistem','Total Aktual','Variance','Status'],
+    _drData.map(r=>[r.tanggal,r.user,r.shift,r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0)),r.total_sales,r.variance,r.void_status||(r.variance===0?'Approved':'Warning')])
   );
 }
 async function _drVoidRequest(id){
@@ -1327,21 +1335,22 @@ function _openDR(){
   _drFoto=null;
   Modal.open({title:'Input Daily Report',size:'lg',body:`
     <div class="form-row cols-2">
-      <div class="form-group"><label>Tanggal<span class="req">*</span></label><input id="dr-tgl" type="date" value="${new Date().toISOString().split('T')[0]}"/></div>
-      <div class="form-group"><label>Shift<span class="req">*</span></label><select id="dr-shift"><option>Pagi</option><option>Siang</option><option>Malam</option></select></div>
+      <div class="form-group"><label>Tanggal<span class="req">*</span></label><input id="dr-tgl" type="date" value="${new Date().toISOString().split('T')[0]}" onchange="_drAutoFill()"/></div>
+      <div class="form-group"><label>Shift<span class="req">*</span></label><select id="dr-shift" onchange="_drAutoFill()"><option>Pagi</option><option>Siang</option><option>Malam</option><option>Long Shift</option></select></div>
     </div>
-    <div class="form-group"><label>Total Sales dari POS<span class="req">*</span></label><input id="dr-sales" type="number" placeholder="0" oninput="_drCalc()"/></div>
+    <div class="form-group"><label>Total Sales Aktual (hitung fisik/POS)<span class="req">*</span></label><input id="dr-sales" type="number" placeholder="0" oninput="_drCalc()"/></div>
+    <p class="text-sm text-gray" style="margin:-4px 0 10px">Breakdown per metode di bawah <b>otomatis dihitung</b> dari data Penjualan pada tanggal & shift yang dipilih — tidak bisa diedit manual.</p>
     <div class="form-row cols-2">
-      <div class="form-group"><label>Cash</label><input id="dr-cash" type="number" value="0" oninput="_drCalc()"/></div>
-      <div class="form-group"><label>QRIS</label><input id="dr-qris" type="number" value="0" oninput="_drCalc()"/></div>
+      <div class="form-group"><label>Mixed</label><input id="dr-mixed" type="number" value="0" readonly/></div>
+      <div class="form-group"><label>Cash</label><input id="dr-cash" type="number" value="0" readonly/></div>
     </div>
     <div class="form-row cols-3">
-      <div class="form-group"><label>Debit</label><input id="dr-dbt" type="number" value="0" oninput="_drCalc()"/></div>
-      <div class="form-group"><label>Credit</label><input id="dr-crd" type="number" value="0" oninput="_drCalc()"/></div>
-      <div class="form-group"><label>E-Wallet</label><input id="dr-ew" type="number" value="0" oninput="_drCalc()"/></div>
+      <div class="form-group"><label>QRIS</label><input id="dr-qris" type="number" value="0" readonly/></div>
+      <div class="form-group"><label>Debit</label><input id="dr-debit" type="number" value="0" readonly/></div>
+      <div class="form-group"><label>Transfer</label><input id="dr-transfer" type="number" value="0" readonly/></div>
     </div>
     <div class="form-row cols-2">
-      <div class="form-group"><label>Total Laporan</label><input id="dr-total" readonly/></div>
+      <div class="form-group"><label>Total Sistem (dari Penjualan)</label><input id="dr-total" readonly/></div>
       <div class="form-group"><label>Variance</label><input id="dr-var" readonly/></div>
     </div>
     <div id="dr-rec" style="margin:8px 0"></div>
@@ -1355,15 +1364,34 @@ function _openDR(){
     footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button>
             <button class="btn btn-primary" onclick="_saveDR()">Submit Daily Report</button>`,
   });
+  setTimeout(_drAutoFill, 0);
+}
+function _drAutoFill(){
+  const tgl = document.getElementById('dr-tgl')?.value;
+  const shift = document.getElementById('dr-shift')?.value;
+  const sums = { Mixed:0, Cash:0, QRIS:0, Debit:0, Transfer:0 };
+  if (tgl && shift) {
+    _drPenjualan.filter(p=>p.tanggal===tgl && p.shift===shift).forEach(p=>{
+      if (sums[p.metode]!==undefined) sums[p.metode]+=p.total;
+      else sums.Mixed+=p.total;
+    });
+  }
+  const setVal=(id,v)=>{const el=document.getElementById(id); if(el) el.value=v;};
+  setVal('dr-mixed', sums.Mixed);
+  setVal('dr-cash', sums.Cash);
+  setVal('dr-qris', sums.QRIS);
+  setVal('dr-debit', sums.Debit);
+  setVal('dr-transfer', sums.Transfer);
+  _drCalc();
 }
 function _drCalc(){
   const sales=+document.getElementById('dr-sales')?.value||0;
+  const mixed=+document.getElementById('dr-mixed')?.value||0;
   const cash=+document.getElementById('dr-cash')?.value||0;
   const qris=+document.getElementById('dr-qris')?.value||0;
-  const dbt=+document.getElementById('dr-dbt')?.value||0;
-  const crd=+document.getElementById('dr-crd')?.value||0;
-  const ew=+document.getElementById('dr-ew')?.value||0;
-  const tot=cash+qris+dbt+crd+ew; const variance=tot-sales;
+  const debit=+document.getElementById('dr-debit')?.value||0;
+  const transfer=+document.getElementById('dr-transfer')?.value||0;
+  const tot=mixed+cash+qris+debit+transfer; const variance=tot-sales;
   const te=document.getElementById('dr-total'); if(te) te.value=fmt.currency(tot);
   const ve=document.getElementById('dr-var'); if(ve){ve.value=`${variance>=0?'+':''}${fmt.currency(variance)}`;ve.style.color=variance!==0?'var(--red-600)':'var(--green-600)';}
   const re=document.getElementById('dr-rec'); if(re&&sales>0) re.innerHTML=variance===0?`<span class="badge bg-green">BALANCED — Rekonsiliasi sesuai</span>`:`<span class="badge bg-red">INVESTIGATE — Selisih ${fmt.currency(Math.abs(variance))}</span>`;
@@ -1371,19 +1399,20 @@ function _drCalc(){
 function _drFotoFn(e){_drFoto=e.target.files[0]; if(!_drFoto)return; const z=document.getElementById('dr-zone'); z.classList.add('done'); z.querySelector('p').textContent='✓ '+_drFoto.name;}
 async function _saveDR(){
   const tgl=document.getElementById('dr-tgl').value;
+  const shift=document.getElementById('dr-shift').value;
   const sales=+document.getElementById('dr-sales').value;
   if(!tgl||!sales){Toast.error('Tanggal dan Total Sales wajib');return;}
   if(!_drFoto){Toast.error('Foto bukti POS wajib');return;}
+  const mixed=+document.getElementById('dr-mixed').value;
   const cash=+document.getElementById('dr-cash').value;
   const qris=+document.getElementById('dr-qris').value;
-  const dbt=+document.getElementById('dr-dbt').value;
-  const crd=+document.getElementById('dr-crd').value;
-  const ew=+document.getElementById('dr-ew').value;
-  const tot=cash+qris+dbt+crd+ew; const variance=tot-sales;
+  const debit=+document.getElementById('dr-debit').value;
+  const transfer=+document.getElementById('dr-transfer').value;
+  const tot=mixed+cash+qris+debit+transfer; const variance=tot-sales;
   try{
-    await DataAPI.saveDailyReport({tanggal:tgl,user:Auth.user.username,shift:document.getElementById('dr-shift').value,total_sales:sales,cash,qris,debit:dbt,credit:crd,ewallet:ew,total_pos:tot,variance,catatan:document.getElementById('dr-cat').value,pos_foto:true,status:'submitted'});
+    await DataAPI.saveDailyReport({tanggal:tgl,user:Auth.user.username,shift,total_sales:sales,mixed,cash,qris,debit,transfer,total_pos:tot,variance,catatan:document.getElementById('dr-cat').value,pos_foto:true,status:'submitted'});
     Modal.close(); Toast.success('Daily report disubmit');
-    if(variance!==0) Toast.warning('Cash variance terdeteksi: '+fmt.currency(Math.abs(variance)));
+    if(variance!==0) Toast.warning('Variance terdeteksi: '+fmt.currency(Math.abs(variance)));
     _drData=await DataAPI.getDailyReport().catch(()=>[]);
     const el=document.getElementById('page-content'); if(el) _renderDR(el);
   }catch(e){Toast.error(e.message);}
