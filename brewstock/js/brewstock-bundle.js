@@ -889,7 +889,13 @@ function _openPembelian(){
         </select></div>
     </div>
     <div class="form-row cols-2">
-      <div class="form-group"><label>Qty<span class="req">*</span></label><input id="pb-qty" type="number" min="1" placeholder="0" oninput="_onPbCalc()"/></div>
+      <div class="form-group">
+        <label>Qty<span class="req">*</span></label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="pb-qty" type="number" min="1" placeholder="0" oninput="_onPbCalc()" style="flex:1"/>
+          <span id="pb-qty-unit" class="badge bg-gray" style="white-space:nowrap">— pilih bahan —</span>
+        </div>
+      </div>
       <div class="form-group"><label>Harga/satuan (Rp)<span class="req">*</span></label><input id="pb-hrg" type="number" oninput="_onPbCalc()"/></div>
     </div>
     <div class="form-group"><label>Total</label><input id="pb-total" readonly/></div>
@@ -900,6 +906,8 @@ function _openPembelian(){
 function _onPbBahan(){
   const s=document.getElementById('pb-bahan'); const o=s?.options[s?.selectedIndex];
   const hrgEl=document.getElementById('pb-hrg'); if(hrgEl && o?.dataset.h) hrgEl.value=o.dataset.h;
+  const unitEl=document.getElementById('pb-qty-unit');
+  if(unitEl) unitEl.textContent = o?.dataset.s ? o.dataset.s : '— pilih bahan —';
   _onPbCalc();
 }
 function _onPbCalc(){
@@ -918,6 +926,149 @@ async function _savePembelian(){
     _pbData=await DataAPI.getPembelian().catch(()=>[]);
     const cont=document.getElementById('page-content'); if(cont) _renderPembelian(cont);
   }catch(e){Toast.error(e.message);}
+}
+
+// ─── PAGE: REPORT ANALYSIS ────────────────────────────────────
+const REP_ROW_DIMS = [
+  {key:'menu_nama', label:'Menu'},
+  {key:'shift',     label:'Shift'},
+  {key:'metode',    label:'Metode Pembayaran'},
+];
+const REP_PERIODS = [{v:'bulan',l:'Tahun-Bulan'},{v:'tahun',l:'Tahun'},{v:'kuartal',l:'Kuartal'}];
+const REP_VALUES  = [{v:'total',l:'Total Penjualan (Rp)'},{v:'qty',l:'Qty Terjual'}];
+const REP_AGGS    = [{v:'sum',l:'Sum (Jumlah)'},{v:'avg',l:'Average (Rata-rata)'},{v:'count',l:'Count (Jumlah Baris)'}];
+
+let _repData=[], _repRowDims=['menu_nama'], _repPeriod='bulan', _repValue='total', _repAgg='sum';
+let _repDari='', _repSampai='', _repResult=null;
+
+async function pageReport(el) {
+  _repData = (await DataAPI.getPenjualan().catch(()=>[])).filter(p=>p.void_status!=='voided');
+  _repResult = null;
+  _renderReportBuilder(el);
+}
+function _renderReportBuilder(el) {
+  el.innerHTML = `
+  <div class="page-head"><div><h2>Report Analysis</h2><p>Buat laporan custom seperti pivot table — pilih dimensi baris, periode kolom, dan nilai.</p></div></div>
+  <div class="card" style="margin-bottom:16px"><div class="card-body">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px">
+      <div>
+        <div class="text-sm" style="font-weight:600;margin-bottom:8px">BARIS (Row Dimensions)</div>
+        ${REP_ROW_DIMS.map(d=>`
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer">
+            <input type="checkbox" value="${d.key}" ${_repRowDims.includes(d.key)?'checked':''} onchange="_repToggleDim('${d.key}',this.checked)"/> ${d.label}
+          </label>`).join('')}
+      </div>
+      <div>
+        <div class="text-sm" style="font-weight:600;margin-bottom:8px">KOLOM (Periode)</div>
+        ${REP_PERIODS.map(p=>`
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer">
+            <input type="radio" name="rep-period" value="${p.v}" ${_repPeriod===p.v?'checked':''} onchange="_repPeriod='${p.v}'"/> ${p.l}
+          </label>`).join('')}
+        <div class="text-sm" style="font-weight:600;margin:14px 0 8px">NILAI</div>
+        ${REP_VALUES.map(p=>`
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer">
+            <input type="radio" name="rep-value" value="${p.v}" ${_repValue===p.v?'checked':''} onchange="_repValue='${p.v}'"/> ${p.l}
+          </label>`).join('')}
+      </div>
+      <div>
+        <div class="text-sm" style="font-weight:600;margin-bottom:8px">AGREGASI</div>
+        ${REP_AGGS.map(p=>`
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer">
+            <input type="radio" name="rep-agg" value="${p.v}" ${_repAgg===p.v?'checked':''} onchange="_repAgg='${p.v}'"/> ${p.l}
+          </label>`).join('')}
+        <div class="text-sm" style="font-weight:600;margin:14px 0 8px">FILTER TANGGAL</div>
+        <div style="display:flex;gap:8px">
+          <input type="date" id="rep-dari" value="${_repDari}" style="flex:1"/>
+          <input type="date" id="rep-sampai" value="${_repSampai}" style="flex:1"/>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:18px">
+      <button class="btn btn-primary" onclick="_repGenerate()">${IC.trend()} Generate Report</button>
+      <button class="btn btn-ghost" onclick="_repReset()">Reset</button>
+      <span class="text-sm text-gray">${_repData.length} baris data terbentuk</span>
+    </div>
+  </div></div>
+  <div id="rep-result"></div>`;
+  if (_repResult) _renderReportResult(document.getElementById('rep-result'));
+}
+function _repToggleDim(key,checked){
+  if (checked) { if(!_repRowDims.includes(key)) _repRowDims.push(key); }
+  else _repRowDims = _repRowDims.filter(k=>k!==key);
+}
+function _repReset(){
+  _repRowDims=['menu_nama']; _repPeriod='bulan'; _repValue='total'; _repAgg='sum';
+  _repDari=''; _repSampai=''; _repResult=null;
+  _renderReportBuilder(document.getElementById('page-content'));
+}
+function _repPeriodKey(tanggal, mode){
+  const d = new Date(tanggal); const y=d.getFullYear(); const m=d.getMonth()+1;
+  if (mode==='tahun') return String(y);
+  if (mode==='kuartal') return `${y}-Q${Math.ceil(m/3)}`;
+  return `${y}-${String(m).padStart(2,'0')}`;
+}
+function _repGenerate(){
+  _repDari = document.getElementById('rep-dari')?.value||'';
+  _repSampai = document.getElementById('rep-sampai')?.value||'';
+  if (!_repRowDims.length){ Toast.error('Pilih minimal 1 dimensi baris'); return; }
+
+  let data = _repData;
+  if (_repDari)   data = data.filter(p=>p.tanggal>=_repDari);
+  if (_repSampai) data = data.filter(p=>p.tanggal<=_repSampai);
+
+  const periodsSet = new Set();
+  const groups = {}; // rowKey -> { label, periods: { period: [values] } }
+  data.forEach(r=>{
+    const rowKey = _repRowDims.map(k=>r[k]||'-').join(' / ');
+    const period = _repPeriodKey(r.tanggal, _repPeriod);
+    periodsSet.add(period);
+    if (!groups[rowKey]) groups[rowKey] = { label: rowKey, periods: {} };
+    if (!groups[rowKey].periods[period]) groups[rowKey].periods[period] = [];
+    groups[rowKey].periods[period].push(_repValue==='qty' ? (r.qty||0) : (r.total||0));
+  });
+  const periods = [...periodsSet].sort();
+  const rows = Object.values(groups).map(g=>{
+    const cells = {};
+    periods.forEach(p=>{
+      const vals = g.periods[p];
+      if (!vals) { cells[p]=null; return; }
+      if (_repAgg==='sum') cells[p] = vals.reduce((a,b)=>a+b,0);
+      else if (_repAgg==='avg') cells[p] = vals.reduce((a,b)=>a+b,0)/vals.length;
+      else cells[p] = vals.length;
+    });
+    return { label:g.label, cells };
+  }).sort((a,b)=>a.label.localeCompare(b.label));
+
+  const chartItems = periods.map(p=>{
+    const total = rows.reduce((s,r)=>s+(r.cells[p]||0),0);
+    return { label:p.length>7?p.slice(2):p, value: _repValue==='total' ? Math.round(total/1000) : Math.round(total), color:'#1B4FD8' };
+  });
+
+  _repResult = { periods, rows, chartItems, totalRows:data.length };
+  _renderReportResult(document.getElementById('rep-result'));
+}
+function _repFmtVal(v){
+  if (v==null) return '-';
+  if (_repValue==='total') return fmt.currency(v);
+  return fmt.number(Math.round(v*10)/10);
+}
+function _renderReportResult(el){
+  if (!el) return;
+  if (!_repResult) { el.innerHTML=''; return; }
+  const {periods,rows,chartItems,totalRows} = _repResult;
+  const dimLabels = _repRowDims.map(k=>REP_ROW_DIMS.find(d=>d.key===k)?.label||k).join(' / ');
+  el.innerHTML = !rows.length ? `<div class="card"><div class="card-body"><div class="empty-state"><p>Tidak ada data untuk filter ini</p></div></div></div>` : `
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-head"><span class="card-title">${IC.trend()} Total ${_repValue==='total'?'Penjualan (Rp, ribuan)':'Qty'} per Periode</span></div>
+    <div class="card-body">${barChart(chartItems,760,150)}</div>
+  </div>
+  <div class="card">
+    <div class="card-head"><span class="card-title">Pivot Table</span><span class="text-sm text-gray">${rows.length} baris — ${periods.length} periode — ${totalRows} data mentah</span></div>
+    <div class="card-body-p0" style="overflow-x:auto">
+      <table><thead><tr><th>${dimLabels}</th>${periods.map(p=>`<th>${p}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r=>`<tr><td>${r.label}</td>${periods.map(p=>`<td class="font-mono">${_repFmtVal(r.cells[p])}</td>`).join('')}</tr>`).join('')}</tbody></table>
+    </div>
+  </div>`;
 }
 
 // ─── PAGE: STOCK OPNAME (ADMIN ONLY) ────────────────────────
@@ -1494,6 +1645,7 @@ const ROUTES = {
   'penjualan':    { label:'Penjualan',      fn: pagePenjualan,    icon: IC.sale,      admin: false },
   'stock':        { label:'Stok Bahan',     fn: pageStock,        icon: IC.stock,     admin: false },
   'pembelian':    { label:'Pembelian',      fn: pagePembelian,    icon: IC.beli,      admin: false },
+  'report':       { label:'Report Analysis',fn: pageReport,       icon: IC.trend,     admin: false },
   'daily-report': { label:'Daily Report',   fn: pageDailyReport,  icon: IC.report,    admin: false },
   'master-bahan': { label:'Master Bahan',   fn: pageMasterBahan,  icon: IC.bahan,     admin: false },
   'master-menu':  { label:'Master Menu',    fn: pageMasterMenu,   icon: IC.menu,      admin: false },
@@ -1508,7 +1660,7 @@ const ROUTES = {
 // Nav groups
 const NAV_ADMIN = [
   { group: null, items: ['dashboard'] },
-  { group: 'Operasional', items: ['penjualan','stock','pembelian','daily-report'] },
+  { group: 'Operasional', items: ['penjualan','stock','pembelian','report','daily-report'] },
   { group: 'Master Data', items: ['master-bahan','master-menu','resep'] },
   { group: 'Manajemen', items: ['audit-trail','users'] },
 ];
