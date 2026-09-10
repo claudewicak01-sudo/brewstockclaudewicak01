@@ -219,8 +219,26 @@ input[readonly]{background:var(--gray-50);color:var(--gray-600)}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
 
+/* ─── RESPONSIVE HELPER CLASSES (dipakai di berbagai halaman) ── */
+.page-head-actions{display:flex;gap:8px}
+.filter-bar{display:flex;gap:8px;flex-wrap:wrap}
+.filter-bar>*{width:140px}
+.line-item-row{display:grid;grid-template-columns:1fr 100px 80px 36px;gap:8px;margin-bottom:8px;align-items:center}
+.cart-row{display:grid;grid-template-columns:1.6fr 80px 1fr 1fr 36px;gap:8px;margin-bottom:8px;align-items:center;padding:8px;background:var(--gray-50);border-radius:8px}
+.cart-row-head{display:grid;grid-template-columns:1.6fr 80px 1fr 1fr 36px;gap:8px;padding:0 8px;font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase}
+.pb-cart-row{display:grid;grid-template-columns:1.4fr 90px 70px 1fr 36px;gap:8px;margin-bottom:8px;align-items:center;padding:8px;background:var(--gray-50);border-radius:8px}
+.pb-cart-row-head{display:grid;grid-template-columns:1.4fr 90px 70px 1fr 36px;gap:8px;padding:0 8px;font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase}
+
 /* ─── RESPONSIVE MOBILE ─────────────────────────────────── */
 @media(max-width:768px){
+  .page-head-actions{flex-direction:column;width:100%}
+  .page-head-actions .btn{width:100%;justify-content:center}
+  .filter-bar{flex-direction:column;align-items:stretch}
+  .filter-bar>*{width:100%}
+  .line-item-row{grid-template-columns:1fr;gap:6px;padding-bottom:8px;border-bottom:1px dashed var(--gray-200)}
+  .cart-row,.pb-cart-row{grid-template-columns:1fr;gap:6px}
+  .cart-row-head,.pb-cart-row-head{display:none}
+  .modal-box{max-width:100%!important}
   /* Sidebar jadi drawer */
   .sidebar{transform:translateX(-100%);width:260px}
   .sidebar.open{transform:translateX(0);box-shadow:0 0 40px rgba(0,0,0,.4)}
