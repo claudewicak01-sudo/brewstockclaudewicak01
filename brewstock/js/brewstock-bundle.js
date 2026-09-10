@@ -697,6 +697,27 @@ function _pjFiltered() {
   return data;
 }
 function _pjSetFil(key,val){ _pjFil[key]=val; _pjPage=1; _renderPenjualan(document.getElementById('page-content'),_pjQ); }
+function _pjDateLabel(){
+  if (_pjFil.dari && _pjFil.sampai) return `${_pjFil.dari} — ${_pjFil.sampai}`;
+  if (_pjFil.dari) return `Dari ${_pjFil.dari}`;
+  if (_pjFil.sampai) return `s/d ${_pjFil.sampai}`;
+  return 'Semua Tanggal';
+}
+function _pjToggleDatePanel(){
+  const p = document.getElementById('pj-date-panel');
+  if (p) p.style.display = (p.style.display==='none'||!p.style.display) ? 'flex' : 'none';
+}
+function _pjDateApply(){
+  _pjFil.dari = document.getElementById('pj-date-dari')?.value || '';
+  _pjFil.sampai = document.getElementById('pj-date-sampai')?.value || '';
+  _pjPage = 1;
+  _renderPenjualan(document.getElementById('page-content'), _pjQ);
+}
+function _pjDateReset(){
+  _pjFil.dari=''; _pjFil.sampai='';
+  _pjPage = 1;
+  _renderPenjualan(document.getElementById('page-content'), _pjQ);
+}
 function _renderPenjualan(el,q) {
   _pjQ = q||'';
   const filtered = _pjFiltered();
@@ -725,19 +746,32 @@ function _renderPenjualan(el,q) {
     <div class="card-head" style="flex-wrap:wrap;gap:8px">
       <div class="search-box">${IC.search()}<input type="text" placeholder="Cari..." value="${_pjQ}" oninput="_renderPenjualan(document.getElementById('page-content'),this.value)" /></div>
       <div class="filter-bar">
-        <input type="date" value="${_pjFil.dari}" onchange="_pjSetFil('dari',this.value)" title="Dari tanggal"/>
-        <input type="date" value="${_pjFil.sampai}" onchange="_pjSetFil('sampai',this.value)" title="Sampai tanggal"/>
+        <div class="filter-field">
+          <span class="filter-label">Tanggal</span>
+          <button type="button" class="btn btn-ghost filter-date-btn" onclick="_pjToggleDatePanel()">📅 ${_pjDateLabel()}</button>
+          <div id="pj-date-panel" class="date-range-panel" style="display:none">
+            <div><label>Dari</label><input type="date" id="pj-date-dari" value="${_pjFil.dari}"/></div>
+            <div><label>Sampai</label><input type="date" id="pj-date-sampai" value="${_pjFil.sampai}"/></div>
+            <div style="display:flex;gap:8px;margin-top:4px">
+              <button type="button" class="btn btn-ghost btn-sm" style="flex:1" onclick="_pjDateReset()">Reset</button>
+              <button type="button" class="btn btn-primary btn-sm" style="flex:1" onclick="_pjDateApply()">Terapkan</button>
+            </div>
+          </div>
+        </div>
+        <div class="filter-field"><span class="filter-label">Shift</span>
         <select onchange="_pjSetFil('shift',this.value)">
           <option value="">Semua Shift</option>
           ${['Pagi','Siang','Malam','Long Shift'].map(s=>`<option ${s===_pjFil.shift?'selected':''}>${s}</option>`).join('')}
-        </select>
+        </select></div>
+        <div class="filter-field"><span class="filter-label">Metode</span>
         <select onchange="_pjSetFil('metode',this.value)">
           <option value="">Semua Metode</option>
           ${['Mixed','Cash','QRIS','Debit','Transfer'].map(s=>`<option ${s===_pjFil.metode?'selected':''}>${s}</option>`).join('')}
-        </select>
+        </select></div>
+        <div class="filter-field"><span class="filter-label">Menu</span>
         <select onchange="_pjSetFil('menu_id',this.value)">
           <option value="">Semua Menu</option>${menuOptions}
-        </select>
+        </select></div>
       </div>
     </div>
     <div class="card-body-p0">
