@@ -712,7 +712,7 @@ function _renderPenjualan(el,q) {
   el.innerHTML=`
   <div class="page-head">
     <div><h2>Input Penjualan</h2><p>Stok bahan otomatis berkurang sesuai resep saat penjualan diinput</p></div>
-    <div style="display:flex;gap:8px">
+    <div class="page-head-actions">
       <button class="btn btn-ghost" onclick="_exportPenjualan()">${IC.download()} Export Excel</button>
       <button class="btn btn-primary" onclick="_openPenjualan()">${IC.plus()} Input Penjualan</button>
     </div>
@@ -724,18 +724,18 @@ function _renderPenjualan(el,q) {
   <div class="card">
     <div class="card-head" style="flex-wrap:wrap;gap:8px">
       <div class="search-box">${IC.search()}<input type="text" placeholder="Cari..." value="${_pjQ}" oninput="_renderPenjualan(document.getElementById('page-content'),this.value)" /></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <input type="date" value="${_pjFil.dari}" onchange="_pjSetFil('dari',this.value)" title="Dari tanggal" style="width:140px"/>
-        <input type="date" value="${_pjFil.sampai}" onchange="_pjSetFil('sampai',this.value)" title="Sampai tanggal" style="width:140px"/>
-        <select onchange="_pjSetFil('shift',this.value)" style="width:110px">
+      <div class="filter-bar">
+        <input type="date" value="${_pjFil.dari}" onchange="_pjSetFil('dari',this.value)" title="Dari tanggal"/>
+        <input type="date" value="${_pjFil.sampai}" onchange="_pjSetFil('sampai',this.value)" title="Sampai tanggal"/>
+        <select onchange="_pjSetFil('shift',this.value)">
           <option value="">Semua Shift</option>
           ${['Pagi','Siang','Malam','Long Shift'].map(s=>`<option ${s===_pjFil.shift?'selected':''}>${s}</option>`).join('')}
         </select>
-        <select onchange="_pjSetFil('metode',this.value)" style="width:120px">
+        <select onchange="_pjSetFil('metode',this.value)">
           <option value="">Semua Metode</option>
           ${['Mixed','Cash','QRIS','Debit','Transfer'].map(s=>`<option ${s===_pjFil.metode?'selected':''}>${s}</option>`).join('')}
         </select>
-        <select onchange="_pjSetFil('menu_id',this.value)" style="width:140px">
+        <select onchange="_pjSetFil('menu_id',this.value)">
           <option value="">Semua Menu</option>${menuOptions}
         </select>
       </div>
@@ -806,63 +806,110 @@ async function _pjVoidReject(id){
   }catch(e){Toast.error(e.message);}
 }
 
+let _pjApprovedMenu=[], _pjRowSeq=0;
 function _openPenjualan() {
-  const approvedMenu = _pjMenu.filter(m=>m.status==='approved'&&m.aktif!==false);
-  let _selMenu=null;
+  _pjApprovedMenu = _pjMenu.filter(m=>m.status==='approved'&&m.aktif!==false);
+  _pjRowSeq = 0;
   Modal.open({
     title:'Input Penjualan',
+    size:'lg',
     body:`
     <div class="form-row cols-2">
       <div class="form-group"><label>Tanggal<span class="req">*</span></label><input id="pj-tgl" type="date" value="${new Date().toISOString().split('T')[0]}"/></div>
       <div class="form-group"><label>Shift<span class="req">*</span></label><select id="pj-shift"><option>Pagi</option><option>Siang</option><option>Malam</option><option>Long Shift</option></select></div>
     </div>
-    <div class="form-group"><label>Menu<span class="req">*</span></label>
-      <select id="pj-menu" onchange="_onPjMenu()"><option value="">— Pilih Menu —</option>
-        ${approvedMenu.map(m=>`<option value="${m.id}" data-h="${m.harga}" data-n="${m.nama}">${m.nama} — ${fmt.currency(m.harga)}</option>`).join('')}
-      </select></div>
-    <div class="form-row cols-2">
-      <div class="form-group"><label>Qty<span class="req">*</span></label><input id="pj-qty" type="number" min="1" placeholder="0" oninput="_onPjQty()"/></div>
-      <div class="form-group"><label>Metode</label><select id="pj-met"><option>Mixed</option><option>Cash</option><option>QRIS</option><option>Debit</option><option>Transfer</option></select></div>
+    <p class="text-sm text-gray" style="margin:4px 0 10px">Tambahkan sebanyak mungkin baris menu — misalnya Latte (Cash) x10, Latte (QRIS) x5, Americano (Cash) x5 — lalu submit sekaligus.</p>
+    <div class="cart-row-head"><span>Menu</span><span>Qty</span><span>Metode</span><span>Subtotal</span><span></span></div>
+    <div id="pj-cart-rows"></div>
+    <button class="btn btn-ghost btn-sm" onclick="_pjAddRow()">${IC.plus()} Tambah Menu</button>
+    <div class="divider" style="margin:14px 0"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:15px">
+      <span>Total Keseluruhan</span><span id="pj-cart-total" class="font-mono">Rp0</span>
     </div>
-    <div class="form-group"><label>Total</label><input id="pj-total" readonly/></div>
-    <div id="pj-preview" style="margin-top:8px"></div>`,
+    <div id="pj-cart-preview" style="margin-top:10px"></div>`,
     footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button>
-            <button class="btn btn-primary" onclick="_savePenjualan()">Submit & Kurangi Stok</button>`,
+            <button class="btn btn-primary" onclick="_savePenjualanCart()">Submit Semua & Kurangi Stok</button>`,
   });
+  _pjAddRow();
 }
-
-function _onPjMenu() {
-  const s=document.getElementById('pj-menu'); const o=s.options[s.selectedIndex];
-  _onPjQty();
-  const lines=_pjResep.filter(r=>r.menu_id==s.value && (r.status||'approved')==='approved');
-  const qty=parseFloat(document.getElementById('pj-qty')?.value)||0;
-  const prev=document.getElementById('pj-preview');
-  if(!prev||!lines.length){if(prev)prev.innerHTML='';return;}
-  prev.innerHTML=`<div style="background:var(--blue-50);border:1px solid var(--blue-100);border-radius:8px;padding:12px">
-    <div style="font-size:11px;font-weight:700;color:var(--blue-700);margin-bottom:6px">📦 Bahan yang akan dikurangi${qty>0?' (qty '+qty+')':''}:</div>
-    ${lines.map(r=>`<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
-      <span>${r.bahan_nama}</span><span class="font-mono">${fmt.number(r.qty*(qty||1))} ${r.satuan}</span>
+function _pjAddRow(){
+  const id = ++_pjRowSeq;
+  const wrap = document.getElementById('pj-cart-rows');
+  if (!wrap) return;
+  const div = document.createElement('div');
+  div.className='cart-row'; div.id=`pj-row-${id}`;
+  div.innerHTML = `
+    <select class="pj-row-menu" onchange="_pjRowCalc(${id})">
+      <option value="">— Pilih Menu —</option>
+      ${_pjApprovedMenu.map(m=>`<option value="${m.id}" data-h="${m.harga}" data-n="${m.nama}">${m.nama}</option>`).join('')}
+    </select>
+    <input class="pj-row-qty" type="number" min="1" placeholder="Qty" oninput="_pjRowCalc(${id})"/>
+    <select class="pj-row-metode"><option>Mixed</option><option>Cash</option><option>QRIS</option><option>Debit</option><option>Transfer</option></select>
+    <input class="pj-row-sub" readonly placeholder="Rp0"/>
+    <button class="btn btn-ghost btn-icon btn-sm" onclick="_pjRemoveRow(${id})">${IC.trash()}</button>`;
+  wrap.appendChild(div);
+}
+function _pjRemoveRow(id){
+  const row = document.getElementById(`pj-row-${id}`);
+  if (row) row.remove();
+  _pjCartCalc();
+}
+function _pjRowCalc(id){
+  const row = document.getElementById(`pj-row-${id}`);
+  if (!row) return;
+  const sel = row.querySelector('.pj-row-menu'); const o = sel.options[sel.selectedIndex];
+  const qty = +row.querySelector('.pj-row-qty').value || 0;
+  const harga = +o?.dataset.h || 0;
+  row.querySelector('.pj-row-sub').value = fmt.currency(harga*qty);
+  _pjCartCalc();
+}
+function _pjCartCalc(){
+  let total = 0;
+  document.querySelectorAll('#pj-cart-rows .cart-row').forEach(row=>{
+    const sel = row.querySelector('.pj-row-menu'); const o = sel.options[sel.selectedIndex];
+    const qty = +row.querySelector('.pj-row-qty').value || 0;
+    total += (+o?.dataset.h || 0) * qty;
+  });
+  const el=document.getElementById('pj-cart-total'); if(el) el.textContent = fmt.currency(total);
+  _pjCartPreview();
+}
+function _pjCartPreview(){
+  const need = {};
+  document.querySelectorAll('#pj-cart-rows .cart-row').forEach(row=>{
+    const sel = row.querySelector('.pj-row-menu'); const menuId=+sel.value; if(!menuId) return;
+    const qty = +row.querySelector('.pj-row-qty').value || 0; if(!qty) return;
+    _pjResep.filter(r=>r.menu_id===menuId && (r.status||'approved')==='approved').forEach(l=>{
+      if (!need[l.bahan_id]) need[l.bahan_id] = { nama:l.bahan_nama, satuan:l.satuan, qty:0 };
+      need[l.bahan_id].qty += l.qty*qty;
+    });
+  });
+  const prev = document.getElementById('pj-cart-preview'); if (!prev) return;
+  const items = Object.values(need);
+  prev.innerHTML = !items.length ? '' : `<div style="background:var(--blue-50);border:1px solid var(--blue-100);border-radius:8px;padding:12px">
+    <div style="font-size:11px;font-weight:700;color:var(--blue-700);margin-bottom:6px">📦 Total bahan yang akan dikurangi:</div>
+    ${items.map(it=>`<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+      <span>${it.nama}</span><span class="font-mono">${fmt.number(it.qty)} ${it.satuan}</span>
     </div>`).join('')}
   </div>`;
 }
-function _onPjQty(){
-  const s=document.getElementById('pj-menu'); const o=s?.options[s?.selectedIndex];
-  const qty=parseFloat(document.getElementById('pj-qty')?.value)||0;
-  const harga=parseFloat(o?.dataset.h)||0;
-  const el=document.getElementById('pj-total'); if(el) el.value=fmt.currency(harga*qty);
-  _onPjMenu();
-}
-
-async function _savePenjualan() {
-  const s=document.getElementById('pj-menu'); const o=s.options[s.selectedIndex];
+async function _savePenjualanCart(){
   const tgl=document.getElementById('pj-tgl').value;
-  const menuId=+s.value; const menuNama=o.dataset.n;
-  const qty=+document.getElementById('pj-qty').value;
-  const harga=+o.dataset.h;
-  if(!tgl||!menuId||!qty){Toast.error('Isi semua field');return;}
-  try {
-    await DataAPI.savePenjualan({tanggal:tgl,shift:document.getElementById('pj-shift').value,menu_id:menuId,menu_nama:menuNama,qty,harga,total:harga*qty,metode:document.getElementById('pj-met').value,created_by:Auth.user.username});
-    Modal.close(); Toast.success(`${menuNama} x${qty} disimpan — stok dikurangi otomatis`);
+  const shift=document.getElementById('pj-shift').value;
+  if(!tgl){Toast.error('Tanggal wajib diisi');return;}
+  const rows = [...document.querySelectorAll('#pj-cart-rows .cart-row')].map(row=>{
+    const sel = row.querySelector('.pj-row-menu'); const o = sel.options[sel.selectedIndex];
+    const qty = +row.querySelector('.pj-row-qty').value || 0;
+    const metode = row.querySelector('.pj-row-metode').value;
+    if (!sel.value || !qty) return null;
+    const harga = +o.dataset.h;
+    return { menu_id:+sel.value, menu_nama:o.dataset.n, harga, qty, metode, total:harga*qty };
+  }).filter(Boolean);
+  if (!rows.length){ Toast.error('Tambahkan minimal 1 menu dengan qty valid'); return; }
+  try{
+    for (const r of rows) {
+      await DataAPI.savePenjualan({tanggal:tgl,shift,menu_id:r.menu_id,menu_nama:r.menu_nama,qty:r.qty,harga:r.harga,total:r.total,metode:r.metode,created_by:Auth.user.username});
+    }
+    Modal.close(); Toast.success(`${rows.length} baris penjualan disimpan — stok dikurangi otomatis`);
     _pjData=await DataAPI.getPenjualan().catch(()=>[]);
     const cont=document.getElementById('page-content'); if(cont) _renderPenjualan(cont,_pjQ);
   } catch(e){Toast.error(e.message);}
@@ -921,7 +968,7 @@ function _renderPembelian(el){
   el.innerHTML=`
   <div class="page-head">
     <div><h2>Pembelian</h2><p>Input pembelian bahan baku — stok otomatis bertambah</p></div>
-    <div style="display:flex;gap:8px">
+    <div class="page-head-actions">
       <button class="btn btn-ghost" onclick="_exportPembelian()">${IC.download()} Export Excel</button>
       <button class="btn btn-primary" onclick="_openPembelian()">${IC.plus()} Input Pembelian</button>
     </div>
@@ -951,68 +998,101 @@ const PB_UNIT_CONVERT = {
 function _pbUnitOptions(baseSatuan){
   return PB_UNIT_CONVERT[baseSatuan] || [{v:baseSatuan, f:1, l:baseSatuan}];
 }
+let _pbApprovedBahan=[], _pbRowSeq=0, _pbFoto=null;
 function _openPembelian(){
-  const approvedBahan = _pbBahan.filter(b=>b.status==='approved'&&b.aktif!==false);
-  Modal.open({title:'Input Pembelian',body:`
+  _pbApprovedBahan = _pbBahan.filter(b=>b.status==='approved'&&b.aktif!==false);
+  _pbRowSeq = 0;
+  _pbFoto = null;
+  Modal.open({title:'Input Pembelian', size:'lg', body:`
     <div class="form-row cols-2">
       <div class="form-group"><label>Tanggal<span class="req">*</span></label><input id="pb-tgl" type="date" value="${new Date().toISOString().split('T')[0]}"/></div>
-      <div class="form-group"><label>Bahan<span class="req">*</span></label>
-        <select id="pb-bahan" onchange="_onPbBahan()"><option value="">— Pilih Bahan —</option>
-          ${approvedBahan.map(b=>`<option value="${b.id}" data-n="${b.nama}" data-s="${b.satuan}">${b.nama} (${b.satuan})</option>`).join('')}
-        </select></div>
+      <div class="form-group"><label>Supplier</label><input id="pb-sup" placeholder="Nama supplier"/></div>
     </div>
-    <div class="form-row cols-2">
-      <div class="form-group">
-        <label>Jumlah Beli<span class="req">*</span></label>
-        <div style="display:flex;gap:8px">
-          <input id="pb-qty" type="number" min="0" step="any" placeholder="0" oninput="_onPbCalc()" style="flex:1"/>
-          <select id="pb-satuan-beli" onchange="_onPbCalc()" style="width:90px" disabled><option>—</option></select>
-        </div>
+    <p class="text-sm text-gray" style="margin:4px 0 10px">Tambahkan beberapa bahan sekaligus dalam satu nota pembelian.</p>
+    <div class="pb-cart-row-head"><span>Bahan</span><span>Jumlah</span><span>Satuan</span><span>Harga (Rp)</span><span></span></div>
+    <div id="pb-cart-rows"></div>
+    <button class="btn btn-ghost btn-sm" onclick="_pbAddRow()">${IC.plus()} Tambah Bahan</button>
+    <div class="divider" style="margin:14px 0"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:15px">
+      <span>Total Nota</span><span id="pb-cart-total" class="font-mono">Rp0</span>
+    </div>
+    <div class="form-group" style="margin-top:14px"><label>Foto Nota<span class="req">*</span></label>
+      <div class="upload-zone" id="pb-zone" onclick="document.getElementById('pb-file').click()">
+        <input type="file" id="pb-file" accept="image/*" style="display:none" onchange="_pbFotoFn(event)"/>
+        ${IC.img()} <p>Klik upload foto nota/struk</p><small>JPG/PNG</small>
       </div>
-      <div class="form-group"><label>Harga (Rp)<span class="req">*</span></label><input id="pb-hrg" type="number" placeholder="Total harga beli"/></div>
-    </div>
-    <div class="form-group"><label>Jumlah Masuk ke Stok (hasil konversi satuan)</label><input id="pb-qty-base" readonly/></div>
-    <div class="form-group"><label>Supplier</label><input id="pb-sup" placeholder="Nama supplier"/></div>`,
-    footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_savePembelian()">Submit & Tambah Stok</button>`,
+    </div>`,
+    footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_savePembelianCart()">Submit Semua & Tambah Stok</button>`,
   });
+  _pbAddRow();
 }
-function _onPbBahan(){
-  const s=document.getElementById('pb-bahan'); const o=s?.options[s?.selectedIndex];
+function _pbAddRow(){
+  const id = ++_pbRowSeq;
+  const wrap = document.getElementById('pb-cart-rows'); if (!wrap) return;
+  const div = document.createElement('div');
+  div.className='pb-cart-row'; div.id=`pb-row-${id}`;
+  div.innerHTML = `
+    <select class="pb-row-bahan" onchange="_pbRowBahanChange(${id})">
+      <option value="">— Pilih Bahan —</option>
+      ${_pbApprovedBahan.map(b=>`<option value="${b.id}" data-n="${b.nama}" data-s="${b.satuan}">${b.nama} (${b.satuan})</option>`).join('')}
+    </select>
+    <input class="pb-row-qty" type="number" min="0" step="any" placeholder="0" oninput="_pbRowCalc(${id})"/>
+    <select class="pb-row-unit" disabled onchange="_pbRowCalc(${id})"><option>—</option></select>
+    <input class="pb-row-hrg" type="number" placeholder="Total Rp" oninput="_pbRowCalc(${id})"/>
+    <button class="btn btn-ghost btn-icon btn-sm" onclick="_pbRemoveRow(${id})">${IC.trash()}</button>
+    <div class="pb-row-info text-sm text-gray" style="grid-column:1/-1;margin-top:-4px"></div>`;
+  wrap.appendChild(div);
+}
+function _pbRemoveRow(id){ const row=document.getElementById(`pb-row-${id}`); if(row) row.remove(); _pbCartCalc(); }
+function _pbRowBahanChange(id){
+  const row = document.getElementById(`pb-row-${id}`); if (!row) return;
+  const sel = row.querySelector('.pb-row-bahan'); const o = sel.options[sel.selectedIndex];
   const baseSatuan = o?.dataset.s || '';
-  const unitSel = document.getElementById('pb-satuan-beli');
+  const unitSel = row.querySelector('.pb-row-unit');
   const opts = _pbUnitOptions(baseSatuan);
-  if (unitSel) {
-    unitSel.disabled = !baseSatuan;
-    unitSel.innerHTML = opts.map(u=>`<option value="${u.v}" data-f="${u.f}">${u.l}</option>`).join('');
-  }
-  _onPbCalc();
+  unitSel.disabled = !baseSatuan;
+  unitSel.innerHTML = opts.map(u=>`<option value="${u.v}" data-f="${u.f}">${u.l}</option>`).join('');
+  _pbRowCalc(id);
 }
-function _onPbCalc(){
-  const qty=+document.getElementById('pb-qty')?.value||0;
-  const unitSel=document.getElementById('pb-satuan-beli');
-  const factor=+unitSel?.options[unitSel.selectedIndex]?.dataset.f || 1;
+function _pbRowCalc(id){
+  const row = document.getElementById(`pb-row-${id}`); if (!row) return;
+  const sel = row.querySelector('.pb-row-bahan'); const baseSatuan = sel.options[sel.selectedIndex]?.dataset.s||'';
+  const qty = +row.querySelector('.pb-row-qty').value || 0;
+  const unitSel = row.querySelector('.pb-row-unit');
+  const factor = +unitSel.options[unitSel.selectedIndex]?.dataset.f || 1;
   const qtyBase = qty*factor;
-  const baseEl=document.getElementById('pb-qty-base');
-  const s=document.getElementById('pb-bahan'); const baseSatuan=s?.options[s?.selectedIndex]?.dataset.s||'';
-  if (baseEl) baseEl.value = `${fmt.number(qtyBase)} ${baseSatuan}`;
+  const info = row.querySelector('.pb-row-info');
+  if (info) info.textContent = baseSatuan ? `= ${fmt.number(qtyBase)} ${baseSatuan} masuk stok` : '';
+  _pbCartCalc();
 }
-async function _savePembelian(){
-  const s=document.getElementById('pb-bahan'); const o=s.options[s.selectedIndex];
+function _pbCartCalc(){
+  let total = 0;
+  document.querySelectorAll('#pb-cart-rows .pb-cart-row').forEach(row=>{ total += +row.querySelector('.pb-row-hrg').value || 0; });
+  const el = document.getElementById('pb-cart-total'); if (el) el.textContent = fmt.currency(total);
+}
+function _pbFotoFn(e){_pbFoto=e.target.files[0]; if(!_pbFoto)return; const z=document.getElementById('pb-zone'); z.classList.add('done'); z.querySelector('p').textContent='✓ '+_pbFoto.name;}
+async function _savePembelianCart(){
   const tgl=document.getElementById('pb-tgl').value;
-  const bahanId=+s.value;
-  const qtyInput=+document.getElementById('pb-qty').value;
-  const hrgTotal=+document.getElementById('pb-hrg').value;
-  const unitSel=document.getElementById('pb-satuan-beli');
-  const unitOpt=unitSel?.options[unitSel.selectedIndex];
-  const factor=+unitOpt?.dataset.f||1;
-  const satuanBeli=unitOpt?.value||'';
-  const baseSatuan=o?.dataset.s||'';
-  const qtyBase=qtyInput*factor;
-  if(!tgl||!bahanId||!qtyInput||!hrgTotal){Toast.error('Isi semua field wajib');return;}
+  const supplier=document.getElementById('pb-sup').value;
+  if (!tgl){ Toast.error('Tanggal wajib diisi'); return; }
+  if (!_pbFoto){ Toast.error('Foto nota wajib diupload'); return; }
+  const rows = [...document.querySelectorAll('#pb-cart-rows .pb-cart-row')].map(row=>{
+    const sel = row.querySelector('.pb-row-bahan'); const o = sel.options[sel.selectedIndex];
+    const qty = +row.querySelector('.pb-row-qty').value || 0;
+    const hrgTotal = +row.querySelector('.pb-row-hrg').value || 0;
+    const unitSel = row.querySelector('.pb-row-unit'); const unitOpt = unitSel.options[unitSel.selectedIndex];
+    const factor = +unitOpt?.dataset.f || 1;
+    const baseSatuan = o?.dataset.s || '';
+    if (!sel.value || !qty || !hrgTotal) return null;
+    const qtyBase = qty*factor;
+    return { bahan_id:+sel.value, bahan_nama:o.dataset.n, satuan:baseSatuan, qty:qtyBase, harga_satuan: qtyBase?Math.round(hrgTotal/qtyBase):0, total:hrgTotal };
+  }).filter(Boolean);
+  if (!rows.length){ Toast.error('Tambahkan minimal 1 bahan dengan jumlah & harga valid'); return; }
   try{
-    await DataAPI.savePembelian({tanggal:tgl,bahan_id:bahanId,bahan_nama:o.dataset.n,satuan:baseSatuan,qty:qtyBase,harga_satuan:qtyBase?Math.round(hrgTotal/qtyBase):0,total:hrgTotal,supplier:document.getElementById('pb-sup').value,created_by:Auth.user.username});
-    await DataAPI.addAudit('Pembelian', `${o.dataset.n} ${fmt.number(qtyInput)}${satuanBeli} (= ${fmt.number(qtyBase)}${baseSatuan})`, 'Input');
-    Modal.close(); Toast.success('Pembelian disimpan — stok bertambah otomatis');
+    for (const r of rows) {
+      await DataAPI.savePembelian({tanggal:tgl,bahan_id:r.bahan_id,bahan_nama:r.bahan_nama,satuan:r.satuan,qty:r.qty,harga_satuan:r.harga_satuan,total:r.total,supplier,foto_nota:true,created_by:Auth.user.username});
+    }
+    Modal.close(); Toast.success(`${rows.length} bahan dibeli — stok bertambah otomatis`);
     _pbData=await DataAPI.getPembelian().catch(()=>[]);
     const cont=document.getElementById('page-content'); if(cont) _renderPembelian(cont);
   }catch(e){Toast.error(e.message);}
@@ -1279,7 +1359,7 @@ function _renderDR(el){
   el.innerHTML=`
   <div class="page-head">
     <div><h2>Daily Report</h2><p>Laporan kas harian — rekonsiliasi total sistem (Penjualan) vs total aktual</p></div>
-    <div style="display:flex;gap:8px">
+    <div class="page-head-actions">
       <button class="btn btn-ghost" onclick="_exportDR()">${IC.download()} Export Excel</button>
       <button class="btn btn-primary" onclick="_openDR()">${IC.plus()} Input Report</button>
     </div>
@@ -1643,7 +1723,7 @@ function _openResep(){
       <select id="rp-menu"><option value="">— Pilih Menu —</option>${menus.map(m=>`<option value="${m.id}">${m.nama}</option>`).join('')}</select></div>
     <div class="divider"></div>
     <div id="rp-lines">
-      <div class="form-row" style="grid-template-columns:1fr 100px 80px 36px;gap:8px;margin-bottom:8px" id="rp-line-0">
+      <div class="line-item-row" id="rp-line-0">
         <select class="rp-bahan" onchange="this.nextElementSibling.nextElementSibling.value=this.options[this.selectedIndex].dataset.sat||''">
           <option value="">— Pilih Bahan —</option>${bahans.map(b=>`<option value="${b.id}" data-sat="${b.satuan}">${b.nama}</option>`).join('')}
         </select>
@@ -1664,7 +1744,7 @@ function _openResepEdit(menuId,menuNama){
     <input type="hidden" id="rp-e-menunama" value="${menuNama.replace(/"/g,'&quot;')}"/>
     <div id="rp-lines">
       ${(existing.length?existing:[{bahan_id:'',qty:''}]).map((l,i)=>`
-      <div class="form-row" style="grid-template-columns:1fr 100px 80px 36px;gap:8px;margin-bottom:8px" id="rp-line-${i}">
+      <div class="line-item-row" id="rp-line-${i}">
         <select class="rp-bahan" onchange="this.nextElementSibling.nextElementSibling.value=this.options[this.selectedIndex].dataset.sat||''">
           <option value="">— Pilih Bahan —</option>${bahans.map(b=>`<option value="${b.id}" data-sat="${b.satuan}" ${b.id===l.bahan_id?'selected':''}>${b.nama}</option>`).join('')}
         </select>
@@ -1689,8 +1769,7 @@ function _addResepLine(){
   const bahans=_rpBahans;
   _resepLineCount++;
   const div=document.createElement('div');
-  div.className='form-row'; div.id=`rp-line-${_resepLineCount}`;
-  div.style='grid-template-columns:1fr 100px 80px 36px;gap:8px;margin-bottom:8px';
+  div.className='line-item-row'; div.id=`rp-line-${_resepLineCount}`;
   div.innerHTML=`<select class="rp-bahan" onchange="this.nextElementSibling.nextElementSibling.value=this.options[this.selectedIndex].dataset.sat||''"><option value="">— Pilih Bahan —</option>${bahans.map(b=>`<option value="${b.id}" data-sat="${b.satuan}">${b.nama}</option>`).join('')}</select><input class="rp-qty" type="number" placeholder="Qty"/><input class="rp-sat" readonly placeholder="sat"/><button class="btn btn-ghost btn-icon btn-sm" onclick="this.closest('[id^=rp-line]').remove()">${IC.trash()}</button>`;
   document.getElementById('rp-lines').appendChild(div);
 }
