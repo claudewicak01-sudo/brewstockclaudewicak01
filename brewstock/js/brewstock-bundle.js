@@ -272,6 +272,31 @@ const DataAPI = {
     await DataAPI.addAudit('Pembelian', `${item.bahan_nama} x${item.qty}`, 'Input');
     return saved;
   },
+  async requestVoidPembelian(id, reason) {
+    const fields = { void_status:'pending', void_reason: reason||'' };
+    if (DEMO_MODE) { const p=_DB.pembelian.find(x=>x.id===id); if(p) Object.assign(p,fields); }
+    else await sbUpdate('pembelian',{id},fields);
+    await DataAPI.addAudit('Pembelian', `#${id}`, 'Ajukan Void');
+  },
+  async approveVoidPembelian(id) {
+    const all = await DataAPI.getPembelian();
+    const item = all.find(p=>p.id===id);
+    if (item) {
+      // kembalikan stok yang tadinya ditambahkan saat pembelian diinput
+      const bahan = await DataAPI.getBahan();
+      const b = bahan.find(x=>x.id===item.bahan_id);
+      if (b) await DataAPI.updateBahanStock(b.id, Math.max(0, (b.stock_current||0) - item.qty));
+    }
+    if (DEMO_MODE) { if(item) item.void_status='voided'; }
+    else await sbUpdate('pembelian',{id},{void_status:'voided'});
+    await DataAPI.addAudit('Pembelian', `#${id}`, 'Void Disetujui — stok dikurangi kembali');
+  },
+  async rejectVoidPembelian(id, reason) {
+    const fields = { void_status:null, void_reject_reason: reason||'' };
+    if (DEMO_MODE) { const p=_DB.pembelian.find(x=>x.id===id); if(p) Object.assign(p,fields); }
+    else await sbUpdate('pembelian',{id},fields);
+    await DataAPI.addAudit('Pembelian', `#${id}`, 'Void Ditolak');
+  },
 
   // STOCK OPNAME
   async getStockOpname() {
@@ -297,6 +322,17 @@ const DataAPI = {
   async saveDailyReport(item) {
     if (DEMO_MODE) { const r={...item,id:_nid()}; _DB.daily_report.push(r); return r; }
     const rows=await sbInsert('daily_report',item);
+    return Array.isArray(rows)?rows[0]:rows;
+  },
+  async updateDailyReport(id, fields) {
+    if (DEMO_MODE) { const d=_DB.daily_report.find(x=>x.id===id); if(d) Object.assign(d,fields); return d; }
+    const rows = await sbUpdate('daily_report',{id},fields);
+    return Array.isArray(rows)?rows[0]:rows;
+  },
+  async updateDailyReportStatus(id, status, reason) {
+    const fields = status==='rejected' ? {status, reject_reason:reason||''} : {status, reject_reason:null};
+    if (DEMO_MODE) { const d=_DB.daily_report.find(x=>x.id===id); if(d) Object.assign(d,fields); return d; }
+    const rows = await sbUpdate('daily_report',{id},fields);
     return Array.isArray(rows)?rows[0]:rows;
   },
   async requestVoidDR(id, reason) {
@@ -478,23 +514,32 @@ const Modal = {
 // lalu tombol Approve/Reject. Reject wajib isi alasan supaya user tahu
 // kenapa ditolak.
 let _aprCallbacks = null;
-function _approvalModal({title, subtitle, changes, note, onApprove, onReject}) {
+function _approvalModal({title, subtitle, changes, note, simple=false, onApprove, onReject}) {
   _aprCallbacks = {onApprove, onReject};
-  const rowsHtml = (changes||[]).map(c=>{
-    const hasBefore = c.before!==undefined && c.before!==null && c.before!=='';
-    const changed = hasBefore && String(c.before)!==String(c.after);
-    return changed
-      ? `<tr><td style="font-weight:600;padding:7px 8px;font-size:12px">${c.label}</td><td style="padding:7px 8px;font-size:12px;color:var(--red-600);text-decoration:line-through">${c.before}</td><td style="padding:7px 8px;font-size:12px;color:var(--green-600);font-weight:600">${c.after}</td></tr>`
-      : `<tr><td style="font-weight:600;padding:7px 8px;font-size:12px">${c.label}</td><td colspan="2" style="padding:7px 8px;font-size:12px">${c.after}</td></tr>`;
-  }).join('');
+  let bodyMain;
+  if (simple) {
+    // Mode VOID: bukan perubahan data, jadi tidak ada Sebelum/Sesudah — cuma info detail.
+    bodyMain = `<div class="table-wrap"><table><tbody>
+      ${(changes||[]).map(c=>`<tr><td style="font-weight:600;padding:7px 8px;font-size:12px;width:40%">${c.label}</td><td style="padding:7px 8px;font-size:12px">${c.after}</td></tr>`).join('')}
+    </tbody></table></div>`;
+  } else {
+    const rowsHtml = (changes||[]).map(c=>{
+      const hasBefore = c.before!==undefined && c.before!==null && c.before!=='';
+      const changed = hasBefore && String(c.before)!==String(c.after);
+      return changed
+        ? `<tr><td style="font-weight:600;padding:7px 8px;font-size:12px">${c.label}</td><td style="padding:7px 8px;font-size:12px;color:var(--red-600);text-decoration:line-through">${c.before}</td><td style="padding:7px 8px;font-size:12px;color:var(--green-600);font-weight:600">${c.after}</td></tr>`
+        : `<tr><td style="font-weight:600;padding:7px 8px;font-size:12px">${c.label}</td><td colspan="2" style="padding:7px 8px;font-size:12px">${c.after}</td></tr>`;
+    }).join('');
+    bodyMain = `<div class="table-wrap"><table>
+      <thead><tr><th>Field</th><th>Sebelum</th><th>Sesudah</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table></div>`;
+  }
   Modal.open({
     title, size:'lg',
     body:`
       ${subtitle?`<p class="text-sm text-gray" style="margin-bottom:10px">${subtitle}</p>`:''}
-      <div class="table-wrap"><table>
-        <thead><tr><th>Field</th><th>Sebelum</th><th>Sesudah</th></tr></thead>
-        <tbody>${rowsHtml}</tbody>
-      </table></div>
+      ${bodyMain}
       ${note?`<div style="margin-top:12px;padding:10px;background:var(--blue-50);border:1px solid var(--blue-100);border-radius:8px" class="text-sm"><b>Alasan/catatan dari user:</b> ${note}</div>`:''}
       <div class="form-group" style="margin-top:14px"><label>Alasan Reject <span class="text-sm text-gray">(wajib diisi kalau reject)</span></label><textarea id="apr-reason" rows="2" placeholder="Contoh: harga tidak sesuai, data kurang lengkap, dll"></textarea></div>`,
     footer:`
@@ -512,6 +557,7 @@ async function _aprConfirm(approve){
     Modal.close(); await _aprCallbacks.onReject(reason);
   }
   _aprCallbacks = null;
+  App._refreshNavBadges();
 }
 
 // ─── TABLE BUILDER ───────────────────────────────────────────
@@ -871,11 +917,12 @@ function _pjVoidShowApproval(id){
   _approvalModal({
     title: `Void Penjualan — ${r.menu_nama}`,
     subtitle: `Diajukan oleh ${r.created_by||'-'} · ${r.tanggal} (${r.shift})`,
+    simple: true,
     changes: [
-      {label:'Menu', before:undefined, after:r.menu_nama},
-      {label:'Qty', before:undefined, after:r.qty},
-      {label:'Total', before:undefined, after:fmt.currency(r.total)},
-      {label:'Metode', before:undefined, after:r.metode},
+      {label:'Menu', after:r.menu_nama},
+      {label:'Qty', after:r.qty},
+      {label:'Total', after:fmt.currency(r.total)},
+      {label:'Metode', after:r.metode},
     ],
     note: r.void_reason || '(tidak ada alasan)',
     onApprove: ()=>_pjVoidApprove(id),
@@ -1073,14 +1120,67 @@ function _renderPembelian(el){
       {label:'Harga/sat',render:r=>fmt.currency(r.harga_satuan)},
       {label:'Total',render:r=>`<span class="font-mono">${fmt.currency(r.total)}</span>`},
       {key:'supplier',label:'Supplier'},{key:'created_by',label:'Oleh'},
+      {label:'Status',render:r=>{
+        if (r.void_status==='voided') return badge('voided');
+        if (r.void_status==='pending') {
+          return Auth.isAdmin()
+            ? `<button class="btn btn-ghost btn-sm" onclick="_pbVoidShowApproval(${r.id})" style="padding:0">${badge('pending')} <span class="text-sm">ℹ️ Lihat Detail</span></button>`
+            : `${badge('pending')} <span class="text-sm text-gray">Menunggu admin</span>`;
+        }
+        const rejectNote = r.void_reject_reason ? `<div class="text-sm" style="color:var(--red-600)">Void terakhir ditolak: ${r.void_reject_reason}</div>` : '';
+        return `<button class="btn btn-ghost btn-sm" onclick="_pbVoidRequest(${r.id})">Void</button>${rejectNote}`;
+      }},
     ],data:_pbData,empty:'Belum ada pembelian'})}
   </div></div>`;
 }
 function _exportPembelian(){
   _exportCSV('pembelian.csv',
-    ['Tanggal','Bahan','Qty','Satuan','Harga/Satuan','Total','Supplier','Oleh'],
-    _pbData.map(r=>[r.tanggal,r.bahan_nama,r.qty,r.satuan,r.harga_satuan,r.total,r.supplier,r.created_by])
+    ['Tanggal','Bahan','Qty','Satuan','Harga/Satuan','Total','Supplier','Oleh','Status'],
+    _pbData.map(r=>[r.tanggal,r.bahan_nama,r.qty,r.satuan,r.harga_satuan,r.total,r.supplier,r.created_by,r.void_status||'Aktif'])
   );
+}
+async function _pbVoidRequest(id){
+  const reason = prompt('Alasan void pembelian ini?');
+  if (reason===null) return;
+  try{
+    await DataAPI.requestVoidPembelian(id, reason);
+    Toast.success('Void diajukan — menunggu approval admin');
+    _pbData=await DataAPI.getPembelian().catch(()=>[]);
+    _renderPembelian(document.getElementById('page-content'));
+  }catch(e){Toast.error(e.message);}
+}
+function _pbVoidShowApproval(id){
+  const r=_pbData.find(x=>x.id===id); if(!r) return;
+  _approvalModal({
+    title: `Void Pembelian — ${r.bahan_nama}`,
+    subtitle: `Diajukan oleh ${r.created_by||'-'} · ${r.tanggal}`,
+    simple: true,
+    changes: [
+      {label:'Bahan', after:r.bahan_nama},
+      {label:'Qty', after:`${fmt.number(r.qty)} ${r.satuan||''}`},
+      {label:'Total', after:fmt.currency(r.total)},
+      {label:'Supplier', after:r.supplier||'-'},
+    ],
+    note: r.void_reason || '(tidak ada alasan)',
+    onApprove: ()=>_pbVoidApprove(id),
+    onReject: (reason)=>_pbVoidReject(id,reason),
+  });
+}
+async function _pbVoidApprove(id){
+  try{
+    await DataAPI.approveVoidPembelian(id);
+    Toast.success('Void disetujui — stok dikurangi kembali');
+    _pbData=await DataAPI.getPembelian().catch(()=>[]);
+    _renderPembelian(document.getElementById('page-content'));
+  }catch(e){Toast.error(e.message);}
+}
+async function _pbVoidReject(id,reason){
+  try{
+    await DataAPI.rejectVoidPembelian(id,reason);
+    Toast.warning('Pengajuan void ditolak');
+    _pbData=await DataAPI.getPembelian().catch(()=>[]);
+    _renderPembelian(document.getElementById('page-content'));
+  }catch(e){Toast.error(e.message);}
 }
 // Konversi satuan beli -> satuan stok dasar. Misal beli 1 kg kopi -> stok
 // nambah 1000 gram (base satuan bahan tetap 'gram').
@@ -1465,16 +1565,11 @@ function _renderDR(el){
         {label:'Total Aktual',render:r=>fmt.currency(r.total_sales)},
         {label:'Variance',render:r=>`<span class="font-mono" style="color:${r.variance!==0?'var(--red-600)':'var(--green-600)'}">${r.variance>=0?'+':''}${fmt.currency(r.variance)}</span>`},
         {label:'Status',render:r=>{
-          if (r.void_status==='voided') return badge('voided');
-          if (r.void_status==='pending') {
-            return Auth.isAdmin()
-              ? `<button class="btn btn-ghost btn-sm" onclick="_drVoidShowApproval(${r.id})" style="padding:0">${badge('pending')} <span class="text-sm">ℹ️ Lihat Detail</span></button>`
-              : `${badge('pending')} <span class="text-sm text-gray">Menunggu admin</span>`;
-          }
-          const statusHtml = r.variance===0?badge('approved'):badge('warning');
-          const rejectNote = r.void_reject_reason ? `<div class="text-sm" style="color:var(--red-600)">Void terakhir ditolak: ${r.void_reject_reason}</div>` : '';
-          return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${statusHtml}<button class="btn btn-ghost btn-sm" onclick="_drVoidRequest(${r.id})">Void</button></div>${rejectNote}`;
+          if (r.status==='waiting') return `<button class="btn btn-ghost btn-sm" onclick="_drShowApproval(${r.id})" style="padding:0">${badge('waiting')} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`;
+          if (r.status==='rejected' && r.reject_reason) return `${badge('rejected')}<div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
+          return r.variance===0?badge('approved'):badge('warning');
         }},
+        {label:'',render:r=>r.status==='waiting'?'':`<button class="btn btn-ghost btn-sm" onclick="_openDREdit(${r.id})">Edit</button>`},
       ],data:_drData,empty:'Belum ada daily report'})}
     </div>
   </div>`;
@@ -1482,41 +1577,26 @@ function _renderDR(el){
 function _exportDR(){
   _exportCSV('daily-report.csv',
     ['Tanggal','User','Shift','Total Sistem','Total Aktual','Variance','Status'],
-    _drData.map(r=>[r.tanggal,r.user,r.shift,r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0)),r.total_sales,r.variance,r.void_status||(r.variance===0?'Approved':'Warning')])
+    _drData.map(r=>[r.tanggal,r.user,r.shift,r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0)),r.total_sales,r.variance,r.status])
   );
 }
-async function _drVoidRequest(id){
-  const reason = prompt('Alasan void daily report ini?');
-  if (reason===null) return;
-  try{ await DataAPI.requestVoidDR(id, reason); Toast.success('Void diajukan — menunggu approval admin');
-    _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));
-  }catch(e){Toast.error(e.message);}
-}
-function _drVoidShowApproval(id){
-  const r = _drData.find(x=>x.id===id); if (!r) return;
+function _drShowApproval(id){
+  const r=_drData.find(x=>x.id===id); if(!r) return;
+  const before = r.pending_before ? (typeof r.pending_before==='string'?JSON.parse(r.pending_before):r.pending_before) : null;
+  const changes = [
+    {label:'Total Aktual', before:before?.total_sales!=null?fmt.currency(before.total_sales):undefined, after:fmt.currency(r.total_sales)},
+    {label:'Catatan', before:before?.catatan, after:r.catatan||'-'},
+  ];
   _approvalModal({
-    title: `Void Daily Report — ${r.tanggal}`,
+    title: `Edit Daily Report — ${r.tanggal}`,
     subtitle: `Diajukan oleh ${r.user||'-'} · Shift ${r.shift}`,
-    changes: [
-      {label:'Total Sistem', before:undefined, after:fmt.currency(r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0)))},
-      {label:'Total Aktual', before:undefined, after:fmt.currency(r.total_sales)},
-      {label:'Variance', before:undefined, after:fmt.currency(r.variance)},
-    ],
-    note: r.void_reason || '(tidak ada alasan)',
-    onApprove: ()=>_drVoidApprove(id),
-    onReject: (reason)=>_drVoidReject(id,reason),
+    changes,
+    onApprove: ()=>_drApprove(id),
+    onReject: (reason)=>_drReject(id,reason),
   });
 }
-async function _drVoidApprove(id){
-  try{ await DataAPI.approveVoidDR(id); Toast.success('Void disetujui');
-    _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));
-  }catch(e){Toast.error(e.message);}
-}
-async function _drVoidReject(id,reason){
-  try{ await DataAPI.rejectVoidDR(id,reason); Toast.warning('Pengajuan void ditolak');
-    _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));
-  }catch(e){Toast.error(e.message);}
-}
+async function _drApprove(id){await DataAPI.updateDailyReportStatus(id,'submitted'); Toast.success('Perubahan daily report diapprove'); _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));}
+async function _drReject(id,reason){await DataAPI.updateDailyReportStatus(id,'rejected',reason); Toast.warning('Perubahan daily report direject'); _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));}
 function _openDR(){
   _drFoto=null;
   Modal.open({title:'Input Daily Report',size:'lg',body:`
@@ -1596,11 +1676,39 @@ async function _saveDR(){
   const transfer=+document.getElementById('dr-transfer').value;
   const tot=mixed+cash+qris+debit+transfer; const variance=tot-sales;
   try{
-    await DataAPI.saveDailyReport({tanggal:tgl,user:Auth.user.username,shift,total_sales:sales,mixed,cash,qris,debit,transfer,total_pos:tot,variance,catatan:document.getElementById('dr-cat').value,pos_foto:true,status:'submitted'});
+    await DataAPI.saveDailyReport({tanggal:tgl,user:Auth.user.username,shift,total_sales:sales,mixed,cash,qris,debit,transfer,total_pos:tot,variance,catatan:document.getElementById('dr-cat').value,pos_foto:true,status:'submitted',pending_before:null});
     Modal.close(); Toast.success('Daily report disubmit');
     if(variance!==0) Toast.warning('Variance terdeteksi: '+fmt.currency(Math.abs(variance)));
     _drData=await DataAPI.getDailyReport().catch(()=>[]);
     const el=document.getElementById('page-content'); if(el) _renderDR(el);
+  }catch(e){Toast.error(e.message);}
+}
+function _openDREdit(id){
+  const r=_drData.find(x=>x.id===id); if(!r) return;
+  Modal.open({title:`Edit Daily Report — ${r.tanggal} (perlu approval admin)`,size:'lg',body:`
+    <div class="form-row cols-2">
+      <div class="form-group"><label>Tanggal</label><input value="${r.tanggal}" readonly/></div>
+      <div class="form-group"><label>Shift</label><input value="${r.shift}" readonly/></div>
+    </div>
+    <div class="form-group"><label>Total Sistem (dari Penjualan)</label><input value="${fmt.currency(r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0)))}" readonly/></div>
+    <div class="form-group"><label>Total Sales Aktual (hitung fisik/POS)<span class="req">*</span></label><input id="dr-e-sales" type="number" value="${r.total_sales}"/></div>
+    <div class="form-group"><label>Catatan</label><textarea id="dr-e-cat" rows="2">${r.catatan||''}</textarea></div>
+    <p class="text-sm text-gray">Perubahan akan berstatus <b>menunggu approval admin</b> sebelum dianggap final.</p>`,
+    footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_saveDREdit(${id})">Submit Perubahan</button>`,
+  });
+}
+async function _saveDREdit(id){
+  const r=_drData.find(x=>x.id===id); if(!r) return;
+  const sales=+document.getElementById('dr-e-sales').value;
+  const catatan=document.getElementById('dr-e-cat').value;
+  if(!sales){Toast.error('Total Sales wajib diisi');return;}
+  const before = { total_sales:r.total_sales, catatan:r.catatan||'' };
+  const tot = r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0));
+  try{
+    await DataAPI.updateDailyReport(id,{total_sales:sales,catatan,variance:tot-sales,status:'waiting',pending_before:JSON.stringify(before)});
+    await DataAPI.addAudit('DailyReport',r.tanggal,'Edit (menunggu approval)');
+    Modal.close(); Toast.success('Perubahan disubmit untuk approval');
+    _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
 }
 
@@ -2158,6 +2266,7 @@ const App = {
       </div></div></div>`;
       console.error('[BrewStock] Page error:', e);
     }
+    this._refreshNavBadges();
   },
 
   _buildNav() {
@@ -2176,10 +2285,12 @@ const App = {
             const r = ROUTES[k];
             return `<div class="nav-item" data-page="${k}" onclick="App.go('${k}')">
               ${r.icon()} <span class="nav-label">${r.label}</span>
+              <span class="nav-badge" id="navbadge-${k}" style="display:none"></span>
             </div>`;
           }).join('')}
         </div>`;
     }).join('');
+    this._refreshNavBadges();
   },
 
   _buildUser() {
@@ -2205,10 +2316,62 @@ const App = {
       ${mobilePages.map(k => {
         const r = ROUTES[k];
         return `<div class="mobile-nav-item" data-page="${k}" onclick="App.go('${k}')">
+          <span class="mobile-nav-badge" id="mobilenavbadge-${k}" style="display:none"></span>
           ${r.icon()} <span>${labels[k]||r.label}</span>
         </div>`;
       }).join('')}
     </div>`;
+    this._refreshNavBadges();
+  },
+
+  // Hitung & tampilkan jumlah item yang perlu diperhatikan di tiap menu:
+  // - Admin: jumlah item berstatus 'waiting' (perlu di-approve) / void 'pending'.
+  // - User biasa: jumlah item MEREKA SENDIRI yang baru saja 'rejected' (perlu
+  //   tahu alasan penolakan) atau void yang barusan ditolak.
+  async _refreshNavBadges(){
+    try{
+      const isAdmin = Auth.isAdmin();
+      const me = Auth.user?.username;
+      const [bahan,menu,resep,penjualan,pembelian,dr] = await Promise.all([
+        DataAPI.getBahan().catch(()=>[]),
+        DataAPI.getMenu().catch(()=>[]),
+        DataAPI.getResep().catch(()=>[]),
+        DataAPI.getPenjualan().catch(()=>[]),
+        DataAPI.getPembelian().catch(()=>[]),
+        DataAPI.getDailyReport().catch(()=>[]),
+      ]);
+      const statusCount = list => isAdmin
+        ? list.filter(x=>x.status==='waiting').length
+        : list.filter(x=>x.created_by===me && x.status==='rejected').length;
+      const voidCount = list => isAdmin
+        ? list.filter(x=>x.void_status==='pending').length
+        : list.filter(x=>x.created_by===me && !x.void_status && x.void_reject_reason).length;
+
+      // Resep: kelompokkan per menu_id biar tidak double-count per baris bahan
+      const resepGroups = {};
+      resep.forEach(r=>{ if(!resepGroups[r.menu_id]) resepGroups[r.menu_id]=r; });
+      const resepList = Object.values(resepGroups);
+
+      const drCount = isAdmin
+        ? dr.filter(x=>x.status==='waiting').length
+        : dr.filter(x=>x.user===me && x.status==='rejected').length;
+
+      const counts = {
+        'master-bahan': statusCount(bahan),
+        'master-menu': statusCount(menu),
+        'resep': statusCount(resepList),
+        'penjualan': voidCount(penjualan),
+        'pembelian': voidCount(pembelian),
+        'daily-report': drCount,
+      };
+      Object.entries(counts).forEach(([key,count])=>{
+        const label = count>9 ? '9+' : String(count);
+        document.querySelectorAll(`#navbadge-${key}, #mobilenavbadge-${key}`).forEach(el=>{
+          el.textContent = count>0 ? label : '';
+          el.style.display = count>0 ? '' : 'none';
+        });
+      });
+    }catch(e){ console.error('[BrewStock] gagal hitung notifikasi nav', e); }
   },
 
   toggleSidebar() {
