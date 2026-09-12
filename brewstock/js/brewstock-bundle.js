@@ -136,9 +136,10 @@ const DataAPI = {
     const rows = await sbUpdate('bahan',{id},{stock_current:newStock});
     return Array.isArray(rows)?rows[0]:rows;
   },
-  async updateBahanStatus(id, status) {
-    if (DEMO_MODE) { const b=_DB.bahan.find(x=>x.id===id); if(b) b.status=status; return b; }
-    const rows = await sbUpdate('bahan',{id},{status});
+  async updateBahanStatus(id, status, reason) {
+    const fields = status==='rejected' ? {status, reject_reason:reason||''} : {status, reject_reason:null};
+    if (DEMO_MODE) { const b=_DB.bahan.find(x=>x.id===id); if(b) Object.assign(b,fields); return b; }
+    const rows = await sbUpdate('bahan',{id},fields);
     return Array.isArray(rows)?rows[0]:rows;
   },
   async updateBahan(id, fields) {
@@ -157,9 +158,10 @@ const DataAPI = {
     const rows = await sbInsert('menu', item);
     return Array.isArray(rows)?rows[0]:rows;
   },
-  async updateMenuStatus(id, status) {
-    if (DEMO_MODE) { const m=_DB.menu.find(x=>x.id===id); if(m) m.status=status; return m; }
-    const rows = await sbUpdate('menu',{id},{status});
+  async updateMenuStatus(id, status, reason) {
+    const fields = status==='rejected' ? {status, reject_reason:reason||''} : {status, reject_reason:null};
+    if (DEMO_MODE) { const m=_DB.menu.find(x=>x.id===id); if(m) Object.assign(m,fields); return m; }
+    const rows = await sbUpdate('menu',{id},fields);
     return Array.isArray(rows)?rows[0]:rows;
   },
   async updateMenu(id, fields) {
@@ -182,10 +184,11 @@ const DataAPI = {
     const url = `${SUPABASE_URL}/rest/v1/resep?menu_id=eq.${menuId}`;
     await fetch(url,{method:'DELETE',headers:H()});
   },
-  async updateResepStatus(menuId, status) {
-    if (DEMO_MODE) { _DB.resep.filter(r=>r.menu_id===menuId).forEach(r=>r.status=status); return; }
+  async updateResepStatus(menuId, status, reason) {
+    const fields = status==='rejected' ? {status, reject_reason:reason||''} : {status, reject_reason:null};
+    if (DEMO_MODE) { _DB.resep.filter(r=>r.menu_id===menuId).forEach(r=>Object.assign(r,fields)); return; }
     const url = `${SUPABASE_URL}/rest/v1/resep?menu_id=eq.${menuId}`;
-    const res = await fetch(url,{method:'PATCH',headers:{...H(),'Prefer':'return=representation'},body:JSON.stringify({status})});
+    const res = await fetch(url,{method:'PATCH',headers:{...H(),'Prefer':'return=representation'},body:JSON.stringify(fields)});
     if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.message || res.statusText); }
     return res.json();
   },
@@ -247,9 +250,10 @@ const DataAPI = {
     else await sbUpdate('penjualan',{id},{void_status:'voided'});
     await DataAPI.addAudit('Penjualan', `#${id}`, 'Void Disetujui — stok dikembalikan');
   },
-  async rejectVoidPenjualan(id) {
-    if (DEMO_MODE) { const p=_DB.penjualan.find(x=>x.id===id); if(p) p.void_status=null; }
-    else await sbUpdate('penjualan',{id},{void_status:null});
+  async rejectVoidPenjualan(id, reason) {
+    const fields = { void_status:null, void_reject_reason: reason||'' };
+    if (DEMO_MODE) { const p=_DB.penjualan.find(x=>x.id===id); if(p) Object.assign(p,fields); }
+    else await sbUpdate('penjualan',{id},fields);
     await DataAPI.addAudit('Penjualan', `#${id}`, 'Void Ditolak');
   },
 
@@ -306,9 +310,10 @@ const DataAPI = {
     else await sbUpdate('daily_report',{id},{void_status:'voided'});
     await DataAPI.addAudit('DailyReport', `#${id}`, 'Void Disetujui');
   },
-  async rejectVoidDR(id) {
-    if (DEMO_MODE) { const d=_DB.daily_report.find(x=>x.id===id); if(d) d.void_status=null; }
-    else await sbUpdate('daily_report',{id},{void_status:null});
+  async rejectVoidDR(id, reason) {
+    const fields = { void_status:null, void_reject_reason: reason||'' };
+    if (DEMO_MODE) { const d=_DB.daily_report.find(x=>x.id===id); if(d) Object.assign(d,fields); }
+    else await sbUpdate('daily_report',{id},fields);
     await DataAPI.addAudit('DailyReport', `#${id}`, 'Void Ditolak');
   },
 
@@ -467,6 +472,47 @@ const Modal = {
   },
   close() { document.getElementById('modal-overlay').classList.remove('open'); },
 };
+
+// ─── APPROVAL INFO MODAL (dipakai semua alur approval admin) ──
+// Menampilkan detail perubahan (sebelum → sesudah) atau info pengajuan,
+// lalu tombol Approve/Reject. Reject wajib isi alasan supaya user tahu
+// kenapa ditolak.
+let _aprCallbacks = null;
+function _approvalModal({title, subtitle, changes, note, onApprove, onReject}) {
+  _aprCallbacks = {onApprove, onReject};
+  const rowsHtml = (changes||[]).map(c=>{
+    const hasBefore = c.before!==undefined && c.before!==null && c.before!=='';
+    const changed = hasBefore && String(c.before)!==String(c.after);
+    return changed
+      ? `<tr><td style="font-weight:600;padding:7px 8px;font-size:12px">${c.label}</td><td style="padding:7px 8px;font-size:12px;color:var(--red-600);text-decoration:line-through">${c.before}</td><td style="padding:7px 8px;font-size:12px;color:var(--green-600);font-weight:600">${c.after}</td></tr>`
+      : `<tr><td style="font-weight:600;padding:7px 8px;font-size:12px">${c.label}</td><td colspan="2" style="padding:7px 8px;font-size:12px">${c.after}</td></tr>`;
+  }).join('');
+  Modal.open({
+    title, size:'lg',
+    body:`
+      ${subtitle?`<p class="text-sm text-gray" style="margin-bottom:10px">${subtitle}</p>`:''}
+      <div class="table-wrap"><table>
+        <thead><tr><th>Field</th><th>Sebelum</th><th>Sesudah</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table></div>
+      ${note?`<div style="margin-top:12px;padding:10px;background:var(--blue-50);border:1px solid var(--blue-100);border-radius:8px" class="text-sm"><b>Alasan/catatan dari user:</b> ${note}</div>`:''}
+      <div class="form-group" style="margin-top:14px"><label>Alasan Reject <span class="text-sm text-gray">(wajib diisi kalau reject)</span></label><textarea id="apr-reason" rows="2" placeholder="Contoh: harga tidak sesuai, data kurang lengkap, dll"></textarea></div>`,
+    footer:`
+      <button class="btn btn-ghost" onclick="Modal.close()">Tutup</button>
+      <button class="btn btn-danger" onclick="_aprConfirm(false)">Reject</button>
+      <button class="btn btn-success" onclick="_aprConfirm(true)">Approve</button>`,
+  });
+}
+async function _aprConfirm(approve){
+  if (!_aprCallbacks) return;
+  if (approve) { Modal.close(); await _aprCallbacks.onApprove(); }
+  else {
+    const reason = document.getElementById('apr-reason')?.value?.trim();
+    if (!reason) { Toast.error('Isi alasan penolakan dulu'); return; }
+    Modal.close(); await _aprCallbacks.onReject(reason);
+  }
+  _aprCallbacks = null;
+}
 
 // ─── TABLE BUILDER ───────────────────────────────────────────
 function buildTable({cols, data, empty='Tidak ada data'}) {
@@ -781,17 +827,14 @@ function _renderPenjualan(el,q) {
         {label:'Total',render:r=>`<span class="font-mono">${fmt.currency(r.total)}</span>`},
         {key:'metode',label:'Metode'},{key:'created_by',label:'Oleh'},
         {label:'Status',render:r=>{
-          const statusHtml = r.void_status ? badge(r.void_status) : '';
-          let actionHtml = '';
-          if (r.void_status==='voided') actionHtml='';
-          else if (r.void_status==='pending') {
-            actionHtml = Auth.isAdmin()
-              ? `<button class="btn btn-success btn-sm" onclick="_pjVoidApprove(${r.id})">Approve</button><button class="btn btn-danger btn-sm" onclick="_pjVoidReject(${r.id})">Reject</button>`
-              : `<span class="text-sm text-gray">Menunggu admin</span>`;
-          } else {
-            actionHtml = `<button class="btn btn-ghost btn-sm" onclick="_pjVoidRequest(${r.id})">Void</button>`;
+          if (r.void_status==='voided') return badge('voided');
+          if (r.void_status==='pending') {
+            return Auth.isAdmin()
+              ? `<button class="btn btn-ghost btn-sm" onclick="_pjVoidShowApproval(${r.id})" style="padding:0">${badge('pending')} <span class="text-sm">ℹ️ Lihat Detail</span></button>`
+              : `${badge('pending')} <span class="text-sm text-gray">Menunggu admin</span>`;
           }
-          return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${statusHtml}${actionHtml}</div>`;
+          const rejectNote = r.void_reject_reason ? `<div class="text-sm" style="color:var(--red-600)">Void terakhir ditolak: ${r.void_reject_reason}</div>` : '';
+          return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="_pjVoidRequest(${r.id})">Void</button></div>${rejectNote}`;
         }},
       ],data:pageData,empty:'Belum ada penjualan'})}
     </div>
@@ -823,6 +866,22 @@ async function _pjVoidRequest(id){
     _renderPenjualan(document.getElementById('page-content'),_pjQ);
   }catch(e){Toast.error(e.message);}
 }
+function _pjVoidShowApproval(id){
+  const r = _pjData.find(x=>x.id===id); if (!r) return;
+  _approvalModal({
+    title: `Void Penjualan — ${r.menu_nama}`,
+    subtitle: `Diajukan oleh ${r.created_by||'-'} · ${r.tanggal} (${r.shift})`,
+    changes: [
+      {label:'Menu', before:undefined, after:r.menu_nama},
+      {label:'Qty', before:undefined, after:r.qty},
+      {label:'Total', before:undefined, after:fmt.currency(r.total)},
+      {label:'Metode', before:undefined, after:r.metode},
+    ],
+    note: r.void_reason || '(tidak ada alasan)',
+    onApprove: ()=>_pjVoidApprove(id),
+    onReject: (reason)=>_pjVoidReject(id,reason),
+  });
+}
 async function _pjVoidApprove(id){
   try{
     await DataAPI.approveVoidPenjualan(id);
@@ -831,9 +890,9 @@ async function _pjVoidApprove(id){
     _renderPenjualan(document.getElementById('page-content'),_pjQ);
   }catch(e){Toast.error(e.message);}
 }
-async function _pjVoidReject(id){
+async function _pjVoidReject(id,reason){
   try{
-    await DataAPI.rejectVoidPenjualan(id);
+    await DataAPI.rejectVoidPenjualan(id,reason);
     Toast.warning('Pengajuan void ditolak');
     _pjData=await DataAPI.getPenjualan().catch(()=>[]);
     _renderPenjualan(document.getElementById('page-content'),_pjQ);
@@ -1406,17 +1465,15 @@ function _renderDR(el){
         {label:'Total Aktual',render:r=>fmt.currency(r.total_sales)},
         {label:'Variance',render:r=>`<span class="font-mono" style="color:${r.variance!==0?'var(--red-600)':'var(--green-600)'}">${r.variance>=0?'+':''}${fmt.currency(r.variance)}</span>`},
         {label:'Status',render:r=>{
-          const statusHtml = r.void_status ? badge(r.void_status) : (r.variance===0?badge('approved'):badge('warning'));
-          let actionHtml = '';
-          if (r.void_status==='voided') actionHtml='';
-          else if (r.void_status==='pending') {
-            actionHtml = Auth.isAdmin()
-              ? `<button class="btn btn-success btn-sm" onclick="_drVoidApprove(${r.id})">Approve</button><button class="btn btn-danger btn-sm" onclick="_drVoidReject(${r.id})">Reject</button>`
-              : `<span class="text-sm text-gray">Menunggu admin</span>`;
-          } else {
-            actionHtml = `<button class="btn btn-ghost btn-sm" onclick="_drVoidRequest(${r.id})">Void</button>`;
+          if (r.void_status==='voided') return badge('voided');
+          if (r.void_status==='pending') {
+            return Auth.isAdmin()
+              ? `<button class="btn btn-ghost btn-sm" onclick="_drVoidShowApproval(${r.id})" style="padding:0">${badge('pending')} <span class="text-sm">ℹ️ Lihat Detail</span></button>`
+              : `${badge('pending')} <span class="text-sm text-gray">Menunggu admin</span>`;
           }
-          return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${statusHtml}${actionHtml}</div>`;
+          const statusHtml = r.variance===0?badge('approved'):badge('warning');
+          const rejectNote = r.void_reject_reason ? `<div class="text-sm" style="color:var(--red-600)">Void terakhir ditolak: ${r.void_reject_reason}</div>` : '';
+          return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${statusHtml}<button class="btn btn-ghost btn-sm" onclick="_drVoidRequest(${r.id})">Void</button></div>${rejectNote}`;
         }},
       ],data:_drData,empty:'Belum ada daily report'})}
     </div>
@@ -1435,13 +1492,28 @@ async function _drVoidRequest(id){
     _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
 }
+function _drVoidShowApproval(id){
+  const r = _drData.find(x=>x.id===id); if (!r) return;
+  _approvalModal({
+    title: `Void Daily Report — ${r.tanggal}`,
+    subtitle: `Diajukan oleh ${r.user||'-'} · Shift ${r.shift}`,
+    changes: [
+      {label:'Total Sistem', before:undefined, after:fmt.currency(r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0)))},
+      {label:'Total Aktual', before:undefined, after:fmt.currency(r.total_sales)},
+      {label:'Variance', before:undefined, after:fmt.currency(r.variance)},
+    ],
+    note: r.void_reason || '(tidak ada alasan)',
+    onApprove: ()=>_drVoidApprove(id),
+    onReject: (reason)=>_drVoidReject(id,reason),
+  });
+}
 async function _drVoidApprove(id){
   try{ await DataAPI.approveVoidDR(id); Toast.success('Void disetujui');
     _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
 }
-async function _drVoidReject(id){
-  try{ await DataAPI.rejectVoidDR(id); Toast.warning('Pengajuan void ditolak');
+async function _drVoidReject(id,reason){
+  try{ await DataAPI.rejectVoidDR(id,reason); Toast.warning('Pengajuan void ditolak');
     _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
 }
@@ -1556,12 +1628,14 @@ function _renderMB(el){
         {label:'Stok',render:r=>`<span class="font-mono">${fmt.number(r.stock_current||0)}</span>`},
         {label:'Min',render:r=>`<span class="font-mono">${fmt.number(r.min_stock)}</span>`},
         {key:'supplier',label:'Supplier'},
-        {label:'Status',render:r=>badge(r.status)},
+        {label:'Status',render:r=>{
+          const b = badge(r.status);
+          if (r.status==='waiting') return `<button class="btn btn-ghost btn-sm" onclick="_mbShowApproval(${r.id})" style="padding:0">${b} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`;
+          if (r.status==='rejected' && r.reject_reason) return `<span title="${r.reject_reason.replace(/"/g,'&quot;')}">${b}</span><div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
+          return b;
+        }},
         {label:'Aktif',render:r=>`<input type="checkbox" ${r.aktif!==false?'checked':''} ${Auth.isAdmin()?`onchange="_mbToggleAktif(${r.id},this.checked)"`:'disabled'} style="width:18px;height:18px"/>`},
-        {label:'',render:r=>`<div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn btn-ghost btn-sm" onclick="_openMBEdit(${r.id})">Edit</button>
-          ${Auth.isAdmin()&&r.status==='waiting'?`<button class="btn btn-success btn-sm" onclick="_mbApprove(${r.id})">Approve</button><button class="btn btn-danger btn-sm" onclick="_mbReject(${r.id})">Reject</button>`:''}
-        </div>`},
+        {label:'',render:r=>`<button class="btn btn-ghost btn-sm" onclick="_openMBEdit(${r.id})">Edit</button>`},
       ],data,empty:'Belum ada bahan'})}
     </div>
   </div>`;
@@ -1570,6 +1644,24 @@ async function _mbToggleAktif(id,aktif){
   try{ await DataAPI.updateBahan(id,{aktif}); Toast.success(aktif?'Bahan diaktifkan':'Bahan dinonaktifkan');
     _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
+}
+function _mbShowApproval(id){
+  const b=_mbData.find(x=>x.id===id); if(!b) return;
+  const before = b.pending_before ? (typeof b.pending_before==='string'?JSON.parse(b.pending_before):b.pending_before) : null;
+  const changes = [
+    {label:'Nama', before:before?.nama, after:b.nama},
+    {label:'Satuan', before:before?.satuan, after:b.satuan},
+    {label:'Min Stock', before:before?.min_stock, after:b.min_stock},
+    {label:'Max Stock', before:before?.max_stock, after:b.max_stock},
+    {label:'Supplier', before:before?.supplier, after:b.supplier||'-'},
+  ];
+  _approvalModal({
+    title: before ? `Edit Bahan — ${b.nama}` : `Bahan Baru — ${b.nama}`,
+    subtitle: before ? `Diajukan oleh ${b.created_by||'-'} · perubahan data bahan ${b.kode}` : `Diajukan oleh ${b.created_by||'-'} · bahan baru ${b.kode}`,
+    changes,
+    onApprove: ()=>_mbApprove(id),
+    onReject: (reason)=>_mbReject(id,reason),
+  });
 }
 function _openMB(){
   const kode=_nextKode(_mbData,'BB');
@@ -1593,13 +1685,13 @@ async function _saveMB(){
   const nama=document.getElementById('mb-nama').value.trim();
   if(!kode||!nama){Toast.error('Kode dan nama wajib');return;}
   try{
-    await DataAPI.saveBahan({kode,nama,satuan:document.getElementById('mb-sat').value,min_stock:+document.getElementById('mb-min').value,max_stock:+document.getElementById('mb-max').value,supplier:document.getElementById('mb-sup').value,status:'waiting',aktif:true,stock_current:0,created_by:Auth.user.username});
+    await DataAPI.saveBahan({kode,nama,satuan:document.getElementById('mb-sat').value,min_stock:+document.getElementById('mb-min').value,max_stock:+document.getElementById('mb-max').value,supplier:document.getElementById('mb-sup').value,status:'waiting',aktif:true,pending_before:null,stock_current:0,created_by:Auth.user.username});
     Modal.close(); Toast.success('Bahan disubmit untuk approval');
     _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
 }
 async function _mbApprove(id){await DataAPI.updateBahanStatus(id,'approved'); Toast.success('Bahan diapprove'); _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));}
-async function _mbReject(id){await DataAPI.updateBahanStatus(id,'rejected'); Toast.warning('Bahan direject'); _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));}
+async function _mbReject(id,reason){await DataAPI.updateBahanStatus(id,'rejected',reason); Toast.warning('Bahan direject'); _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));}
 
 function _openMBEdit(id){
   const b=_mbData.find(x=>x.id===id); if(!b) return;
@@ -1621,10 +1713,12 @@ function _openMBEdit(id){
   });
 }
 async function _saveMBEdit(id){
+  const b=_mbData.find(x=>x.id===id); if(!b) return;
   const nama=document.getElementById('mb-e-nama').value.trim();
   if(!nama){Toast.error('Nama wajib');return;}
+  const before = { nama:b.nama, satuan:b.satuan, min_stock:b.min_stock, max_stock:b.max_stock, supplier:b.supplier||'' };
   try{
-    await DataAPI.updateBahan(id,{nama,satuan:document.getElementById('mb-e-sat').value,min_stock:+document.getElementById('mb-e-min').value,max_stock:+document.getElementById('mb-e-max').value,supplier:document.getElementById('mb-e-sup').value,status:'waiting'});
+    await DataAPI.updateBahan(id,{nama,satuan:document.getElementById('mb-e-sat').value,min_stock:+document.getElementById('mb-e-min').value,max_stock:+document.getElementById('mb-e-max').value,supplier:document.getElementById('mb-e-sup').value,status:'waiting',pending_before:JSON.stringify(before)});
     await DataAPI.addAudit('Bahan',nama,'Edit (menunggu approval)');
     Modal.close(); Toast.success('Perubahan disubmit untuk approval');
     _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));
@@ -1644,12 +1738,14 @@ async function pageMasterMenu(el){
     ${buildTable({cols:[
       {key:'kode',label:'Kode'},{key:'nama',label:'Menu'},{key:'kategori',label:'Kategori'},
       {label:'Harga',render:r=>fmt.currency(r.harga)},
-      {label:'Status',render:r=>badge(r.status)},
+      {label:'Status',render:r=>{
+        const b = badge(r.status);
+        if (r.status==='waiting') return `<button class="btn btn-ghost btn-sm" onclick="_mmShowApproval(${r.id})" style="padding:0">${b} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`;
+        if (r.status==='rejected' && r.reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
+        return b;
+      }},
       {label:'Aktif',render:r=>`<input type="checkbox" ${r.aktif!==false?'checked':''} ${Auth.isAdmin()?`onchange="_mmToggleAktif(${r.id},this.checked)"`:'disabled'} style="width:18px;height:18px"/>`},
-      {label:'',render:r=>`<div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn btn-ghost btn-sm" onclick="_openMMEdit(${r.id})">Edit</button>
-        ${Auth.isAdmin()&&r.status==='waiting'?`<button class="btn btn-success btn-sm" onclick="_mmApprove(${r.id})">Approve</button><button class="btn btn-danger btn-sm" onclick="_mmReject(${r.id})">Reject</button>`:''}
-      </div>`},
+      {label:'',render:r=>`<button class="btn btn-ghost btn-sm" onclick="_openMMEdit(${r.id})">Edit</button>`},
     ],data:_mmData,empty:'Belum ada menu'})}
   </div></div>`;
 }
@@ -1657,6 +1753,22 @@ async function _mmToggleAktif(id,aktif){
   try{ await DataAPI.updateMenu(id,{aktif}); Toast.success(aktif?'Menu diaktifkan':'Menu dinonaktifkan');
     _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
+}
+function _mmShowApproval(id){
+  const m=_mmData.find(x=>x.id===id); if(!m) return;
+  const before = m.pending_before ? (typeof m.pending_before==='string'?JSON.parse(m.pending_before):m.pending_before) : null;
+  const changes = [
+    {label:'Nama', before:before?.nama, after:m.nama},
+    {label:'Kategori', before:before?.kategori, after:m.kategori},
+    {label:'Harga', before:before?.harga!=null?fmt.currency(before.harga):undefined, after:fmt.currency(m.harga)},
+  ];
+  _approvalModal({
+    title: before ? `Edit Menu — ${m.nama}` : `Menu Baru — ${m.nama}`,
+    subtitle: before ? `Diajukan oleh ${m.created_by||'-'} · perubahan data menu ${m.kode}` : `Diajukan oleh ${m.created_by||'-'} · menu baru ${m.kode}`,
+    changes,
+    onApprove: ()=>_mmApprove(id),
+    onReject: (reason)=>_mmReject(id,reason),
+  });
 }
 function _openMM(){
   const kode=_nextKode(_mmData,'MN');
@@ -1674,11 +1786,11 @@ function _openMM(){
 async function _saveMM(){
   const kode=document.getElementById('mm-kode').value.trim(); const nama=document.getElementById('mm-nama').value.trim(); const harga=+document.getElementById('mm-hrg').value;
   if(!kode||!nama||!harga){Toast.error('Semua field wajib');return;}
-  try{await DataAPI.saveMenu({kode,nama,kategori:document.getElementById('mm-kat').value,harga,status:'waiting',aktif:true,created_by:Auth.user.username}); Modal.close(); Toast.success('Menu disubmit'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
+  try{await DataAPI.saveMenu({kode,nama,kategori:document.getElementById('mm-kat').value,harga,status:'waiting',aktif:true,pending_before:null,created_by:Auth.user.username}); Modal.close(); Toast.success('Menu disubmit'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
   catch(e){Toast.error(e.message);}
 }
 async function _mmApprove(id){await DataAPI.updateMenuStatus(id,'approved'); Toast.success('Menu diapprove'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
-async function _mmReject(id){await DataAPI.updateMenuStatus(id,'rejected'); Toast.warning('Menu direject'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
+async function _mmReject(id,reason){await DataAPI.updateMenuStatus(id,'rejected',reason); Toast.warning('Menu direject'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
 
 function _openMMEdit(id){
   const m=_mmData.find(x=>x.id===id); if(!m) return;
@@ -1696,10 +1808,12 @@ function _openMMEdit(id){
   });
 }
 async function _saveMMEdit(id){
+  const m=_mmData.find(x=>x.id===id); if(!m) return;
   const nama=document.getElementById('mm-e-nama').value.trim(); const harga=+document.getElementById('mm-e-hrg').value;
   if(!nama||!harga){Toast.error('Nama dan harga wajib');return;}
+  const before = { nama:m.nama, kategori:m.kategori, harga:m.harga };
   try{
-    await DataAPI.updateMenu(id,{nama,kategori:document.getElementById('mm-e-kat').value,harga,status:'waiting'});
+    await DataAPI.updateMenu(id,{nama,kategori:document.getElementById('mm-e-kat').value,harga,status:'waiting',pending_before:JSON.stringify(before)});
     await DataAPI.addAudit('Menu',nama,'Edit (menunggu approval)');
     Modal.close(); Toast.success('Perubahan disubmit untuk approval');
     _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));
@@ -1725,26 +1839,49 @@ async function pageResep(el){
     const status = lines[0]?.status || 'approved';
     const menuId = lines[0]?.menu_id;
     const aktif = lines[0]?.aktif !== false;
+    const rejectReason = lines[0]?.reject_reason;
     return `
     <div class="card mb-4">
       <div class="card-head">
-        <span class="card-title">${IC.menu()} ${nama} ${badge(status)}</span>
+        <span class="card-title">${IC.menu()} ${nama} ${status==='waiting'?`<button class="btn btn-ghost btn-sm" onclick="_rpShowApproval(${menuId})" style="padding:0">${badge(status)} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`:badge(status)}</span>
         <div style="display:flex;gap:12px;align-items:center">
           <label style="display:flex;align-items:center;gap:6px;cursor:${Auth.isAdmin()?'pointer':'default'}" class="text-sm">
             <input type="checkbox" ${aktif?'checked':''} ${Auth.isAdmin()?`onchange="_rpToggleAktif(${menuId},this.checked)"`:'disabled'} style="width:18px;height:18px"/> Aktif
           </label>
           <button class="btn btn-ghost btn-sm" onclick='_openResepEdit(${menuId},"${nama.replace(/"/g,'&quot;')}")'>Edit</button>
-          ${Auth.isAdmin()&&status==='waiting'?`<button class="btn btn-success btn-sm" onclick="_rpApprove(${menuId})">Approve</button><button class="btn btn-danger btn-sm" onclick="_rpReject(${menuId})">Reject</button>`:''}
         </div>
       </div>
+      ${status==='rejected'&&rejectReason?`<div class="text-sm" style="color:var(--red-600);padding:0 16px 8px">Alasan ditolak: ${rejectReason}</div>`:''}
       <div class="card-body-p0">
         ${buildTable({cols:[{key:'bahan_nama',label:'Bahan'},{label:'Qty',render:r=>`<span class="font-mono">${r.qty} ${r.satuan}</span>`}],data:lines})}
       </div>
     </div>`;
   }).join(''):`<div class="card"><div class="card-body"><div class="empty-state"><p>Belum ada resep</p></div></div></div>`}`;
 }
+function _rpShowApproval(menuId){
+  const lines = (_rpLastResep||[]).filter(r=>r.menu_id===menuId);
+  if (!lines.length) return;
+  const first = lines[0];
+  const before = first.pending_before ? (typeof first.pending_before==='string'?JSON.parse(first.pending_before):first.pending_before) : null;
+  let changes;
+  if (before) {
+    const beforeMap={}; before.forEach(l=>beforeMap[l.bahan_nama]=`${l.qty} ${l.satuan}`);
+    const afterMap={}; lines.forEach(l=>afterMap[l.bahan_nama]=`${l.qty} ${l.satuan}`);
+    const allNames=[...new Set([...Object.keys(beforeMap),...Object.keys(afterMap)])];
+    changes = allNames.map(n=>({label:n, before:beforeMap[n]||'(tidak ada)', after:afterMap[n]||'(dihapus)'}));
+  } else {
+    changes = lines.map(l=>({label:l.bahan_nama, before:undefined, after:`${l.qty} ${l.satuan}`}));
+  }
+  _approvalModal({
+    title: before ? `Edit Resep — ${first.menu_nama}` : `Resep Baru — ${first.menu_nama}`,
+    subtitle: `Diajukan oleh ${first.created_by||'-'}`,
+    changes,
+    onApprove: ()=>_rpApprove(menuId),
+    onReject: (reason)=>_rpReject(menuId,reason),
+  });
+}
 async function _rpApprove(menuId){await DataAPI.updateResepStatus(menuId,'approved'); Toast.success('Resep diapprove'); App.go('resep');}
-async function _rpReject(menuId){await DataAPI.updateResepStatus(menuId,'rejected'); Toast.warning('Resep direject'); App.go('resep');}
+async function _rpReject(menuId,reason){await DataAPI.updateResepStatus(menuId,'rejected',reason); Toast.warning('Resep direject'); App.go('resep');}
 async function _rpToggleAktif(menuId,aktif){
   try{ await DataAPI.updateResepAktif(menuId,aktif); Toast.success(aktif?'Resep diaktifkan':'Resep dinonaktifkan'); App.go('resep'); }
   catch(e){Toast.error(e.message);}
@@ -1807,19 +1944,19 @@ function _addResepLine(){
   div.innerHTML=`<select class="rp-bahan" onchange="this.nextElementSibling.nextElementSibling.value=this.options[this.selectedIndex].dataset.sat||''"><option value="">— Pilih Bahan —</option>${bahans.map(b=>`<option value="${b.id}" data-sat="${b.satuan}">${b.nama}</option>`).join('')}</select><input class="rp-qty" type="number" placeholder="Qty"/><input class="rp-sat" readonly placeholder="sat"/><button class="btn btn-ghost btn-icon btn-sm" onclick="this.closest('[id^=rp-line]').remove()">${IC.trash()}</button>`;
   document.getElementById('rp-lines').appendChild(div);
 }
-function _collectResepLines(menuId,menuNama){
+function _collectResepLines(menuId,menuNama,pendingBefore){
   // Catatan: query di-scope ke child langsung dari #rp-lines supaya wrapper
   // #rp-lines sendiri tidak ikut kepilih (namanya juga cocok pola [id^=rp-line]).
   return [...document.querySelectorAll('#rp-lines > [id^=rp-line-]')].map(row=>{
     const b=row.querySelector('.rp-bahan'); const q=row.querySelector('.rp-qty'); const s=row.querySelector('.rp-sat');
     if(!b?.value||!q?.value)return null;
-    return{menu_id:menuId,menu_nama:menuNama,bahan_id:+b.value,bahan_nama:b.options[b.selectedIndex]?.text,qty:+q.value,satuan:s?.value||'',status:'waiting',aktif:true,created_by:Auth.user.username};
+    return{menu_id:menuId,menu_nama:menuNama,bahan_id:+b.value,bahan_nama:b.options[b.selectedIndex]?.text,qty:+q.value,satuan:s?.value||'',status:'waiting',aktif:true,pending_before:pendingBefore||null,created_by:Auth.user.username};
   }).filter(Boolean);
 }
 async function _saveResep(){
   const menuSel=document.getElementById('rp-menu'); const menuId=+menuSel.value; const menuNama=menuSel.options[menuSel.selectedIndex]?.text;
   if(!menuId){Toast.error('Pilih menu');return;}
-  const lines=_collectResepLines(menuId,menuNama);
+  const lines=_collectResepLines(menuId,menuNama,null);
   if(!lines.length){Toast.error('Tambahkan minimal 1 bahan');return;}
   try{
     // Hapus resep lama untuk menu ini (kalau ada) supaya tidak dobel
@@ -1832,7 +1969,8 @@ async function _saveResep(){
 async function _saveResepEdit(){
   const menuId=+document.getElementById('rp-e-menuid').value;
   const menuNama=document.getElementById('rp-e-menunama').value;
-  const lines=_collectResepLines(menuId,menuNama);
+  const before = (_rpLastResep||[]).filter(r=>r.menu_id===menuId).map(l=>({bahan_nama:l.bahan_nama,qty:l.qty,satuan:l.satuan}));
+  const lines=_collectResepLines(menuId,menuNama,JSON.stringify(before));
   if(!lines.length){Toast.error('Tambahkan minimal 1 bahan');return;}
   try{
     await DataAPI.deleteResepByMenu(menuId);
