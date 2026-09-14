@@ -561,10 +561,15 @@ async function _aprConfirm(approve){
 }
 
 // ─── TABLE BUILDER ───────────────────────────────────────────
-function buildTable({cols, data, empty='Tidak ada data'}) {
+function buildTable({cols, data, empty='Tidak ada data', rowId, rowClass, rowAttrs}) {
   if (!data?.length) return `<div class="empty-state">${IC.bahan()} <p>${empty}</p></div>`;
   const head = cols.map(c=>`<th>${c.label}</th>`).join('');
-  const rows = data.map(row=>`<tr>${cols.map(c=>`<td>${c.render?c.render(row):(row[c.key]??'-')}</td>`).join('')}</tr>`).join('');
+  const rows = data.map(row=>{
+    const id = rowId ? ` id="${rowId(row)}"` : '';
+    const cls = rowClass ? ` class="${rowClass(row)}"` : '';
+    const attrs = rowAttrs ? ` ${rowAttrs(row)}` : '';
+    return `<tr${id}${cls}${attrs}>${cols.map(c=>`<td>${c.render?c.render(row):(row[c.key]??'-')}</td>`).join('')}</tr>`;
+  }).join('');
   return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -572,6 +577,37 @@ function searchFilter(data, q, keys) {
   if (!q) return data;
   const lq = q.toLowerCase();
   return data.filter(r=>keys.some(k=>String(r[k]||'').toLowerCase().includes(lq)));
+}
+
+// ─── NOTIFIKASI: tandai-sudah-dilihat & sorot baris ────────────
+// Disimpan di localStorage (per browser/device) karena tidak ada sistem
+// read/unread di backend. "marker" = teks alasan reject saat ini — kalau
+// admin reject ulang dengan alasan BEDA, notifikasi akan muncul lagi.
+function _seenKey(module,id){ return `bs_seen_${module}_${id}`; }
+function _isDismissed(module,id,marker){
+  try { return localStorage.getItem(_seenKey(module,id)) === String(marker||''); } catch(e){ return false; }
+}
+function _dismiss(module,id,marker){
+  try { localStorage.setItem(_seenKey(module,id), String(marker||'')); } catch(e){}
+  App._refreshNavBadges();
+}
+// Apakah baris ini notifikasi (reject) milik user yang lagi login, dan belum di-dismiss?
+function _isMyNotified(r, module){
+  return !Auth.isAdmin() && r.created_by===Auth.user?.username && r.reject_reason && !_isDismissed(module, r.id, r.reject_reason);
+}
+function _isMyVoidNotified(r, module){
+  return !Auth.isAdmin() && r.created_by===Auth.user?.username && r.void_reject_reason && !_isDismissed(module, r.id, 'void:'+r.void_reject_reason);
+}
+function _isMyDRNotified(r){
+  return !Auth.isAdmin() && r.user===Auth.user?.username && r.reject_reason && !_isDismissed('daily-report', r.id, r.reject_reason);
+}
+// Setelah render halaman, scroll otomatis ke baris pertama yang lagi disorot
+// notifikasi (kalau ada) supaya user langsung ketemu transaksi yang dimaksud.
+function _scrollToNotified(){
+  setTimeout(()=>{
+    const el = document.querySelector('tr.row-notify, .card-notify');
+    if (el) el.scrollIntoView({behavior:'smooth', block:'center'});
+  }, 60);
 }
 
 // ─── EXPORT EXCEL (CSV) ────────────────────────────────────────
@@ -882,7 +918,11 @@ function _renderPenjualan(el,q) {
           const rejectNote = r.void_reject_reason ? `<div class="text-sm" style="color:var(--red-600)">Void terakhir ditolak: ${r.void_reject_reason}</div>` : '';
           return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="_pjVoidRequest(${r.id})">Void</button></div>${rejectNote}`;
         }},
-      ],data:pageData,empty:'Belum ada penjualan'})}
+      ],data:pageData,empty:'Belum ada penjualan',
+        rowId:r=>`row-penjualan-${r.id}`,
+        rowClass:r=>_isMyVoidNotified(r,'penjualan')?'row-notify':'',
+        rowAttrs:r=>_isMyVoidNotified(r,'penjualan')?`onclick="_dismiss('penjualan',${r.id},'void:${(r.void_reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`:'',
+      })}
     </div>
     ${filtered.length ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid var(--gray-100)">
       <span class="text-sm text-gray">Halaman ${_pjPage} dari ${totalPages} — ${filtered.length} transaksi</span>
@@ -892,6 +932,7 @@ function _renderPenjualan(el,q) {
       </div>
     </div>` : ''}
   </div>`;
+  _scrollToNotified();
   }
 function _pjGoPage(p){ _pjPage=p; _renderPenjualan(document.getElementById('page-content'),_pjQ); }
 function _exportPenjualan(){
@@ -1130,8 +1171,13 @@ function _renderPembelian(el){
         const rejectNote = r.void_reject_reason ? `<div class="text-sm" style="color:var(--red-600)">Void terakhir ditolak: ${r.void_reject_reason}</div>` : '';
         return `<button class="btn btn-ghost btn-sm" onclick="_pbVoidRequest(${r.id})">Void</button>${rejectNote}`;
       }},
-    ],data:_pbData,empty:'Belum ada pembelian'})}
+    ],data:_pbData,empty:'Belum ada pembelian',
+      rowId:r=>`row-pembelian-${r.id}`,
+      rowClass:r=>_isMyVoidNotified(r,'pembelian')?'row-notify':'',
+      rowAttrs:r=>_isMyVoidNotified(r,'pembelian')?`onclick="_dismiss('pembelian',${r.id},'void:${(r.void_reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`:'',
+    })}
   </div></div>`;
+  _scrollToNotified();
 }
 function _exportPembelian(){
   _exportCSV('pembelian.csv',
@@ -1566,13 +1612,19 @@ function _renderDR(el){
         {label:'Variance',render:r=>`<span class="font-mono" style="color:${r.variance!==0?'var(--red-600)':'var(--green-600)'}">${r.variance>=0?'+':''}${fmt.currency(r.variance)}</span>`},
         {label:'Status',render:r=>{
           if (r.status==='waiting') return `<button class="btn btn-ghost btn-sm" onclick="_drShowApproval(${r.id})" style="padding:0">${badge('waiting')} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`;
-          if (r.status==='rejected' && r.reject_reason) return `${badge('rejected')}<div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
-          return r.variance===0?badge('approved'):badge('warning');
+          const b = r.variance===0?badge('approved'):badge('warning');
+          if (r.reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
+          return b;
         }},
         {label:'',render:r=>r.status==='waiting'?'':`<button class="btn btn-ghost btn-sm" onclick="_openDREdit(${r.id})">Edit</button>`},
-      ],data:_drData,empty:'Belum ada daily report'})}
+      ],data:_drData,empty:'Belum ada daily report',
+        rowId:r=>`row-dr-${r.id}`,
+        rowClass:r=>_isMyDRNotified(r)?'row-notify':'',
+        rowAttrs:r=>_isMyDRNotified(r)?`onclick="_dismiss('daily-report',${r.id},'${(r.reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`:'',
+      })}
     </div>
   </div>`;
+  _scrollToNotified();
   }
 function _exportDR(){
   _exportCSV('daily-report.csv',
@@ -1596,7 +1648,17 @@ function _drShowApproval(id){
   });
 }
 async function _drApprove(id){await DataAPI.updateDailyReportStatus(id,'submitted'); Toast.success('Perubahan daily report diapprove'); _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));}
-async function _drReject(id,reason){await DataAPI.updateDailyReportStatus(id,'rejected',reason); Toast.warning('Perubahan daily report direject'); _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));}
+async function _drReject(id,reason){
+  const r = _drData.find(x=>x.id===id);
+  const before = r?.pending_before ? (typeof r.pending_before==='string'?JSON.parse(r.pending_before):r.pending_before) : null;
+  if (before) {
+    const tot = r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0));
+    await DataAPI.updateDailyReport(id, {total_sales:before.total_sales, catatan:before.catatan, variance:tot-before.total_sales, status:'submitted', reject_reason:reason, pending_before:null});
+  } else {
+    await DataAPI.updateDailyReportStatus(id,'rejected',reason);
+  }
+  Toast.warning('Perubahan daily report direject'); _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));
+}
 function _openDR(){
   _drFoto=null;
   Modal.open({title:'Input Daily Report',size:'lg',body:`
@@ -1739,14 +1801,19 @@ function _renderMB(el){
         {label:'Status',render:r=>{
           const b = badge(r.status);
           if (r.status==='waiting') return `<button class="btn btn-ghost btn-sm" onclick="_mbShowApproval(${r.id})" style="padding:0">${b} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`;
-          if (r.status==='rejected' && r.reject_reason) return `<span title="${r.reject_reason.replace(/"/g,'&quot;')}">${b}</span><div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
+          if (r.reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
           return b;
         }},
         {label:'Aktif',render:r=>`<input type="checkbox" ${r.aktif!==false?'checked':''} ${Auth.isAdmin()?`onchange="_mbToggleAktif(${r.id},this.checked)"`:'disabled'} style="width:18px;height:18px"/>`},
         {label:'',render:r=>`<button class="btn btn-ghost btn-sm" onclick="_openMBEdit(${r.id})">Edit</button>`},
-      ],data,empty:'Belum ada bahan'})}
+      ],data,empty:'Belum ada bahan',
+        rowId:r=>`row-bahan-${r.id}`,
+        rowClass:r=>_isMyNotified(r,'bahan')?'row-notify':'',
+        rowAttrs:r=>_isMyNotified(r,'bahan')?`onclick="_dismiss('bahan',${r.id},'${(r.reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`:'',
+      })}
     </div>
   </div>`;
+  _scrollToNotified();
 }
 async function _mbToggleAktif(id,aktif){
   try{ await DataAPI.updateBahan(id,{aktif}); Toast.success(aktif?'Bahan diaktifkan':'Bahan dinonaktifkan');
@@ -1799,7 +1866,18 @@ async function _saveMB(){
   }catch(e){Toast.error(e.message);}
 }
 async function _mbApprove(id){await DataAPI.updateBahanStatus(id,'approved'); Toast.success('Bahan diapprove'); _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));}
-async function _mbReject(id,reason){await DataAPI.updateBahanStatus(id,'rejected',reason); Toast.warning('Bahan direject'); _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));}
+async function _mbReject(id,reason){
+  const b = _mbData.find(x=>x.id===id);
+  const before = b?.pending_before ? (typeof b.pending_before==='string'?JSON.parse(b.pending_before):b.pending_before) : null;
+  if (before) {
+    // Reject untuk EDIT -> kembalikan field ke nilai sebelumnya
+    await DataAPI.updateBahan(id, {...before, status:'approved', reject_reason:reason, pending_before:null});
+  } else {
+    // Reject untuk bahan BARU -> tetap rejected, tidak ada yang direstore
+    await DataAPI.updateBahanStatus(id,'rejected',reason);
+  }
+  Toast.warning('Bahan direject'); _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));
+}
 
 function _openMBEdit(id){
   const b=_mbData.find(x=>x.id===id); if(!b) return;
@@ -1849,13 +1927,18 @@ async function pageMasterMenu(el){
       {label:'Status',render:r=>{
         const b = badge(r.status);
         if (r.status==='waiting') return `<button class="btn btn-ghost btn-sm" onclick="_mmShowApproval(${r.id})" style="padding:0">${b} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`;
-        if (r.status==='rejected' && r.reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
+        if (r.reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
         return b;
       }},
       {label:'Aktif',render:r=>`<input type="checkbox" ${r.aktif!==false?'checked':''} ${Auth.isAdmin()?`onchange="_mmToggleAktif(${r.id},this.checked)"`:'disabled'} style="width:18px;height:18px"/>`},
       {label:'',render:r=>`<button class="btn btn-ghost btn-sm" onclick="_openMMEdit(${r.id})">Edit</button>`},
-    ],data:_mmData,empty:'Belum ada menu'})}
+    ],data:_mmData,empty:'Belum ada menu',
+      rowId:r=>`row-menu-${r.id}`,
+      rowClass:r=>_isMyNotified(r,'menu')?'row-notify':'',
+      rowAttrs:r=>_isMyNotified(r,'menu')?`onclick="_dismiss('menu',${r.id},'${(r.reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`:'',
+    })}
   </div></div>`;
+  _scrollToNotified();
 }
 async function _mmToggleAktif(id,aktif){
   try{ await DataAPI.updateMenu(id,{aktif}); Toast.success(aktif?'Menu diaktifkan':'Menu dinonaktifkan');
@@ -1898,7 +1981,16 @@ async function _saveMM(){
   catch(e){Toast.error(e.message);}
 }
 async function _mmApprove(id){await DataAPI.updateMenuStatus(id,'approved'); Toast.success('Menu diapprove'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
-async function _mmReject(id,reason){await DataAPI.updateMenuStatus(id,'rejected',reason); Toast.warning('Menu direject'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
+async function _mmReject(id,reason){
+  const m = _mmData.find(x=>x.id===id);
+  const before = m?.pending_before ? (typeof m.pending_before==='string'?JSON.parse(m.pending_before):m.pending_before) : null;
+  if (before) {
+    await DataAPI.updateMenu(id, {...before, status:'approved', reject_reason:reason, pending_before:null});
+  } else {
+    await DataAPI.updateMenuStatus(id,'rejected',reason);
+  }
+  Toast.warning('Menu direject'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));
+}
 
 function _openMMEdit(id){
   const m=_mmData.find(x=>x.id===id); if(!m) return;
@@ -1948,8 +2040,9 @@ async function pageResep(el){
     const menuId = lines[0]?.menu_id;
     const aktif = lines[0]?.aktif !== false;
     const rejectReason = lines[0]?.reject_reason;
+    const notified = _isMyNotified({...lines[0], id:menuId}, 'resep');
     return `
-    <div class="card mb-4">
+    <div class="card mb-4${notified?' card-notify':''}" id="row-resep-${menuId}" ${notified?`onclick="_dismiss('resep',${menuId},'${(rejectReason||'').replace(/'/g,"\\'")}');this.classList.remove('card-notify')"`:''}>
       <div class="card-head">
         <span class="card-title">${IC.menu()} ${nama} ${status==='waiting'?`<button class="btn btn-ghost btn-sm" onclick="_rpShowApproval(${menuId})" style="padding:0">${badge(status)} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`:badge(status)}</span>
         <div style="display:flex;gap:12px;align-items:center">
@@ -1959,12 +2052,13 @@ async function pageResep(el){
           <button class="btn btn-ghost btn-sm" onclick='_openResepEdit(${menuId},"${nama.replace(/"/g,'&quot;')}")'>Edit</button>
         </div>
       </div>
-      ${status==='rejected'&&rejectReason?`<div class="text-sm" style="color:var(--red-600);padding:0 16px 8px">Alasan ditolak: ${rejectReason}</div>`:''}
+      ${rejectReason?`<div class="text-sm" style="color:var(--red-600);padding:0 16px 8px">Alasan ditolak: ${rejectReason}</div>`:''}
       <div class="card-body-p0">
         ${buildTable({cols:[{key:'bahan_nama',label:'Bahan'},{label:'Qty',render:r=>`<span class="font-mono">${r.qty} ${r.satuan}</span>`}],data:lines})}
       </div>
     </div>`;
   }).join(''):`<div class="card"><div class="card-body"><div class="empty-state"><p>Belum ada resep</p></div></div></div>`}`;
+  _scrollToNotified();
 }
 function _rpShowApproval(menuId){
   const lines = (_rpLastResep||[]).filter(r=>r.menu_id===menuId);
@@ -1989,7 +2083,26 @@ function _rpShowApproval(menuId){
   });
 }
 async function _rpApprove(menuId){await DataAPI.updateResepStatus(menuId,'approved'); Toast.success('Resep diapprove'); App.go('resep');}
-async function _rpReject(menuId,reason){await DataAPI.updateResepStatus(menuId,'rejected',reason); Toast.warning('Resep direject'); App.go('resep');}
+async function _rpReject(menuId,reason){
+  const lines = (_rpLastResep||[]).filter(r=>r.menu_id===menuId);
+  const first = lines[0];
+  const before = first?.pending_before ? (typeof first.pending_before==='string'?JSON.parse(first.pending_before):first.pending_before) : null;
+  if (before && before.length) {
+    // Reject untuk EDIT resep -> kembalikan ke komposisi sebelumnya
+    const restored = before.map(l=>({
+      menu_id:menuId, menu_nama:first.menu_nama,
+      bahan_id:l.bahan_id, bahan_nama:l.bahan_nama, qty:l.qty, satuan:l.satuan,
+      status:'approved', aktif:true, reject_reason:reason, pending_before:null,
+      created_by:first.created_by,
+    }));
+    await DataAPI.deleteResepByMenu(menuId);
+    await DataAPI.saveResep(restored);
+  } else {
+    // Reject untuk resep BARU -> tetap tersimpan sebagai rejected (tidak ada yang direstore)
+    await DataAPI.updateResepStatus(menuId,'rejected',reason);
+  }
+  Toast.warning('Resep direject'); App.go('resep');
+}
 async function _rpToggleAktif(menuId,aktif){
   try{ await DataAPI.updateResepAktif(menuId,aktif); Toast.success(aktif?'Resep diaktifkan':'Resep dinonaktifkan'); App.go('resep'); }
   catch(e){Toast.error(e.message);}
@@ -2077,7 +2190,7 @@ async function _saveResep(){
 async function _saveResepEdit(){
   const menuId=+document.getElementById('rp-e-menuid').value;
   const menuNama=document.getElementById('rp-e-menunama').value;
-  const before = (_rpLastResep||[]).filter(r=>r.menu_id===menuId).map(l=>({bahan_nama:l.bahan_nama,qty:l.qty,satuan:l.satuan}));
+  const before = (_rpLastResep||[]).filter(r=>r.menu_id===menuId).map(l=>({bahan_id:l.bahan_id,bahan_nama:l.bahan_nama,qty:l.qty,satuan:l.satuan}));
   const lines=_collectResepLines(menuId,menuNama,JSON.stringify(before));
   if(!lines.length){Toast.error('Tambahkan minimal 1 bahan');return;}
   try{
@@ -2340,28 +2453,33 @@ const App = {
         DataAPI.getPembelian().catch(()=>[]),
         DataAPI.getDailyReport().catch(()=>[]),
       ]);
-      const statusCount = list => isAdmin
+      // Admin: hitung yang masih nunggu approval.
+      // User: hitung punya sendiri yang PERNAH ditolak & belum di-dismiss —
+      // dicek dari reject_reason (bukan status), karena status data yang
+      // ditolak dikembalikan lagi ke normal, tapi reject_reason-nya tetap
+      // disimpan sampai user klik/lihat barisnya.
+      const statusCount = (list,module) => isAdmin
         ? list.filter(x=>x.status==='waiting').length
-        : list.filter(x=>x.created_by===me && x.status==='rejected').length;
-      const voidCount = list => isAdmin
+        : list.filter(x=>x.created_by===me && x.reject_reason && !_isDismissed(module,x.id,x.reject_reason)).length;
+      const voidCount = (list,module) => isAdmin
         ? list.filter(x=>x.void_status==='pending').length
-        : list.filter(x=>x.created_by===me && !x.void_status && x.void_reject_reason).length;
+        : list.filter(x=>x.created_by===me && x.void_reject_reason && !_isDismissed(module,x.id,'void:'+x.void_reject_reason)).length;
 
       // Resep: kelompokkan per menu_id biar tidak double-count per baris bahan
       const resepGroups = {};
       resep.forEach(r=>{ if(!resepGroups[r.menu_id]) resepGroups[r.menu_id]=r; });
-      const resepList = Object.values(resepGroups);
+      const resepList = Object.values(resepGroups).map(r=>({...r,id:r.menu_id}));
 
       const drCount = isAdmin
         ? dr.filter(x=>x.status==='waiting').length
-        : dr.filter(x=>x.user===me && x.status==='rejected').length;
+        : dr.filter(x=>x.user===me && x.reject_reason && !_isDismissed('daily-report',x.id,x.reject_reason)).length;
 
       const counts = {
-        'master-bahan': statusCount(bahan),
-        'master-menu': statusCount(menu),
-        'resep': statusCount(resepList),
-        'penjualan': voidCount(penjualan),
-        'pembelian': voidCount(pembelian),
+        'master-bahan': statusCount(bahan,'bahan'),
+        'master-menu': statusCount(menu,'menu'),
+        'resep': statusCount(resepList,'resep'),
+        'penjualan': voidCount(penjualan,'penjualan'),
+        'pembelian': voidCount(pembelian,'pembelian'),
         'daily-report': drCount,
       };
       Object.entries(counts).forEach(([key,count])=>{
