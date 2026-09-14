@@ -147,6 +147,26 @@ const DataAPI = {
     const rows = await sbUpdate('bahan',{id},fields);
     return Array.isArray(rows)?rows[0]:rows;
   },
+  async deleteBahan(id) {
+    if (DEMO_MODE) { _DB.bahan = _DB.bahan.filter(x=>x.id!==id); return; }
+    await fetch(`${SUPABASE_URL}/rest/v1/bahan?id=eq.${id}`,{method:'DELETE',headers:H()});
+  },
+  async requestDeleteBahan(id, reason) {
+    const fields = { delete_status:'pending', delete_reason: reason||'' };
+    if (DEMO_MODE) { const b=_DB.bahan.find(x=>x.id===id); if(b) Object.assign(b,fields); }
+    else await sbUpdate('bahan',{id},fields);
+    await DataAPI.addAudit('Bahan', `#${id}`, 'Ajukan Delete');
+  },
+  async approveDeleteBahan(id) {
+    await DataAPI.deleteBahan(id);
+    await DataAPI.addAudit('Bahan', `#${id}`, 'Delete Disetujui');
+  },
+  async rejectDeleteBahan(id, reason) {
+    const fields = { delete_status:null, delete_reject_reason: reason||'' };
+    if (DEMO_MODE) { const b=_DB.bahan.find(x=>x.id===id); if(b) Object.assign(b,fields); }
+    else await sbUpdate('bahan',{id},fields);
+    await DataAPI.addAudit('Bahan', `#${id}`, 'Delete Ditolak');
+  },
 
   // MENU
   async getMenu() {
@@ -168,6 +188,26 @@ const DataAPI = {
     if (DEMO_MODE) { const m=_DB.menu.find(x=>x.id===id); if(m) Object.assign(m,fields); return m; }
     const rows = await sbUpdate('menu',{id},fields);
     return Array.isArray(rows)?rows[0]:rows;
+  },
+  async deleteMenu(id) {
+    if (DEMO_MODE) { _DB.menu = _DB.menu.filter(x=>x.id!==id); return; }
+    await fetch(`${SUPABASE_URL}/rest/v1/menu?id=eq.${id}`,{method:'DELETE',headers:H()});
+  },
+  async requestDeleteMenu(id, reason) {
+    const fields = { delete_status:'pending', delete_reason: reason||'' };
+    if (DEMO_MODE) { const m=_DB.menu.find(x=>x.id===id); if(m) Object.assign(m,fields); }
+    else await sbUpdate('menu',{id},fields);
+    await DataAPI.addAudit('Menu', `#${id}`, 'Ajukan Delete');
+  },
+  async approveDeleteMenu(id) {
+    await DataAPI.deleteMenu(id);
+    await DataAPI.addAudit('Menu', `#${id}`, 'Delete Disetujui');
+  },
+  async rejectDeleteMenu(id, reason) {
+    const fields = { delete_status:null, delete_reject_reason: reason||'' };
+    if (DEMO_MODE) { const m=_DB.menu.find(x=>x.id===id); if(m) Object.assign(m,fields); }
+    else await sbUpdate('menu',{id},fields);
+    await DataAPI.addAudit('Menu', `#${id}`, 'Delete Ditolak');
   },
 
   // RESEP
@@ -199,6 +239,24 @@ const DataAPI = {
     if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.message || res.statusText); }
     return res.json();
   },
+  async requestDeleteResep(menuId, reason) {
+    const fields = { delete_status:'pending', delete_reason: reason||'' };
+    if (DEMO_MODE) { _DB.resep.filter(r=>r.menu_id===menuId).forEach(r=>Object.assign(r,fields)); return; }
+    const url = `${SUPABASE_URL}/rest/v1/resep?menu_id=eq.${menuId}`;
+    await fetch(url,{method:'PATCH',headers:{...H(),'Prefer':'return=representation'},body:JSON.stringify(fields)});
+    await DataAPI.addAudit('Resep', `menu #${menuId}`, 'Ajukan Delete');
+  },
+  async approveDeleteResep(menuId) {
+    await DataAPI.deleteResepByMenu(menuId);
+    await DataAPI.addAudit('Resep', `menu #${menuId}`, 'Delete Disetujui');
+  },
+  async rejectDeleteResep(menuId, reason) {
+    const fields = { delete_status:null, delete_reject_reason: reason||'' };
+    if (DEMO_MODE) { _DB.resep.filter(r=>r.menu_id===menuId).forEach(r=>Object.assign(r,fields)); return; }
+    const url = `${SUPABASE_URL}/rest/v1/resep?menu_id=eq.${menuId}`;
+    await fetch(url,{method:'PATCH',headers:{...H(),'Prefer':'return=representation'},body:JSON.stringify(fields)});
+    await DataAPI.addAudit('Resep', `menu #${menuId}`, 'Delete Ditolak');
+  },
 
   // PENJUALAN — saat input penjualan, stok dikurangi otomatis
   async getPenjualan() {
@@ -225,6 +283,35 @@ const DataAPI = {
     await DataAPI.addAudit('Penjualan', `${item.menu_nama} x${item.qty}`, 'Input');
     return saved;
   },
+  async updatePenjualan(id, fields) {
+    if (DEMO_MODE) { const p=_DB.penjualan.find(x=>x.id===id); if(p) Object.assign(p,fields); return p; }
+    const rows = await sbUpdate('penjualan',{id},fields);
+    return Array.isArray(rows)?rows[0]:rows;
+  },
+  // Dipakai saat Edit Penjualan: kembalikan stok dari komposisi lama, lalu
+  // kurangi lagi sesuai komposisi baru.
+  async reapplyPenjualanStock(oldMenuId, oldQty, newMenuId, newQty) {
+    const resep = await DataAPI.getResep();
+    let bahan = await DataAPI.getBahan();
+    const oldLines = resep.filter(r=>r.menu_id===oldMenuId && (r.status||'approved')==='approved');
+    for (const line of oldLines) {
+      const b = bahan.find(x=>x.id===line.bahan_id);
+      if (b) await DataAPI.updateBahanStock(b.id, (b.stock_current||0) + line.qty*oldQty);
+    }
+    bahan = await DataAPI.getBahan();
+    const newLines = resep.filter(r=>r.menu_id===newMenuId && (r.status||'approved')==='approved');
+    for (const line of newLines) {
+      const b = bahan.find(x=>x.id===line.bahan_id);
+      if (b) await DataAPI.updateBahanStock(b.id, Math.max(0,(b.stock_current||0) - line.qty*newQty));
+    }
+  },
+
+  async updatePenjualanStatus(id, status, reason) {
+    const fields = status==='rejected' ? {status, reject_reason:reason||''} : {status, reject_reason:null};
+    if (DEMO_MODE) { const p=_DB.penjualan.find(x=>x.id===id); if(p) Object.assign(p,fields); return p; }
+    const rows = await sbUpdate('penjualan',{id},fields);
+    return Array.isArray(rows)?rows[0]:rows;
+  },
 
   // VOID PENJUALAN — staff ajukan, admin approve/reject. Stok dikembalikan
   // otomatis kalau void disetujui.
@@ -246,9 +333,9 @@ const DataAPI = {
         if (b) await DataAPI.updateBahanStock(b.id, (b.stock_current||0) + line.qty*item.qty);
       }
     }
-    if (DEMO_MODE) { if(item) item.void_status='voided'; }
-    else await sbUpdate('penjualan',{id},{void_status:'voided'});
-    await DataAPI.addAudit('Penjualan', `#${id}`, 'Void Disetujui — stok dikembalikan');
+    if (DEMO_MODE) { _DB.penjualan = _DB.penjualan.filter(p=>p.id!==id); }
+    else await fetch(`${SUPABASE_URL}/rest/v1/penjualan?id=eq.${id}`,{method:'DELETE',headers:H()});
+    await DataAPI.addAudit('Penjualan', `#${id}`, 'Delete Disetujui — stok dikembalikan');
   },
   async rejectVoidPenjualan(id, reason) {
     const fields = { void_status:null, void_reject_reason: reason||'' };
@@ -272,6 +359,26 @@ const DataAPI = {
     await DataAPI.addAudit('Pembelian', `${item.bahan_nama} x${item.qty}`, 'Input');
     return saved;
   },
+  async updatePembelian(id, fields) {
+    if (DEMO_MODE) { const p=_DB.pembelian.find(x=>x.id===id); if(p) Object.assign(p,fields); return p; }
+    const rows = await sbUpdate('pembelian',{id},fields);
+    return Array.isArray(rows)?rows[0]:rows;
+  },
+  async updatePembelianStatus(id, status, reason) {
+    const fields = status==='rejected' ? {status, reject_reason:reason||''} : {status, reject_reason:null};
+    if (DEMO_MODE) { const p=_DB.pembelian.find(x=>x.id===id); if(p) Object.assign(p,fields); return p; }
+    const rows = await sbUpdate('pembelian',{id},fields);
+    return Array.isArray(rows)?rows[0]:rows;
+  },
+  // Dipakai saat Edit Pembelian: kembalikan stok lama, terapkan stok baru.
+  async reapplyPembelianStock(oldBahanId, oldQty, newBahanId, newQty) {
+    let bahan = await DataAPI.getBahan();
+    const ob = bahan.find(x=>x.id===oldBahanId);
+    if (ob) await DataAPI.updateBahanStock(ob.id, Math.max(0,(ob.stock_current||0) - oldQty));
+    bahan = await DataAPI.getBahan();
+    const nb = bahan.find(x=>x.id===newBahanId);
+    if (nb) await DataAPI.updateBahanStock(nb.id, (nb.stock_current||0) + newQty);
+  },
   async requestVoidPembelian(id, reason) {
     const fields = { void_status:'pending', void_reason: reason||'' };
     if (DEMO_MODE) { const p=_DB.pembelian.find(x=>x.id===id); if(p) Object.assign(p,fields); }
@@ -287,9 +394,9 @@ const DataAPI = {
       const b = bahan.find(x=>x.id===item.bahan_id);
       if (b) await DataAPI.updateBahanStock(b.id, Math.max(0, (b.stock_current||0) - item.qty));
     }
-    if (DEMO_MODE) { if(item) item.void_status='voided'; }
-    else await sbUpdate('pembelian',{id},{void_status:'voided'});
-    await DataAPI.addAudit('Pembelian', `#${id}`, 'Void Disetujui — stok dikurangi kembali');
+    if (DEMO_MODE) { _DB.pembelian = _DB.pembelian.filter(p=>p.id!==id); }
+    else await fetch(`${SUPABASE_URL}/rest/v1/pembelian?id=eq.${id}`,{method:'DELETE',headers:H()});
+    await DataAPI.addAudit('Pembelian', `#${id}`, 'Delete Disetujui — stok dikurangi kembali');
   },
   async rejectVoidPembelian(id, reason) {
     const fields = { void_status:null, void_reject_reason: reason||'' };
@@ -334,6 +441,26 @@ const DataAPI = {
     if (DEMO_MODE) { const d=_DB.daily_report.find(x=>x.id===id); if(d) Object.assign(d,fields); return d; }
     const rows = await sbUpdate('daily_report',{id},fields);
     return Array.isArray(rows)?rows[0]:rows;
+  },
+  async deleteDailyReport(id) {
+    if (DEMO_MODE) { _DB.daily_report = _DB.daily_report.filter(x=>x.id!==id); return; }
+    await fetch(`${SUPABASE_URL}/rest/v1/daily_report?id=eq.${id}`,{method:'DELETE',headers:H()});
+  },
+  async requestDeleteDR(id, reason) {
+    const fields = { delete_status:'pending', delete_reason: reason||'' };
+    if (DEMO_MODE) { const d=_DB.daily_report.find(x=>x.id===id); if(d) Object.assign(d,fields); }
+    else await sbUpdate('daily_report',{id},fields);
+    await DataAPI.addAudit('DailyReport', `#${id}`, 'Ajukan Delete');
+  },
+  async approveDeleteDR(id) {
+    await DataAPI.deleteDailyReport(id);
+    await DataAPI.addAudit('DailyReport', `#${id}`, 'Delete Disetujui');
+  },
+  async rejectDeleteDR(id, reason) {
+    const fields = { delete_status:null, delete_reject_reason: reason||'' };
+    if (DEMO_MODE) { const d=_DB.daily_report.find(x=>x.id===id); if(d) Object.assign(d,fields); }
+    else await sbUpdate('daily_report',{id},fields);
+    await DataAPI.addAudit('DailyReport', `#${id}`, 'Delete Ditolak');
   },
   async requestVoidDR(id, reason) {
     const fields = { void_status:'pending', void_reason: reason||'' };
@@ -560,6 +687,31 @@ async function _aprConfirm(approve){
   App._refreshNavBadges();
 }
 
+// Modal View — read-only, cuma buat lihat detail lengkap (gak ada approve/reject).
+function _viewModal({title, subtitle, fields}){
+  const rows = (fields||[]).map(f=>`<tr><td style="font-weight:600;padding:7px 8px;font-size:12px;width:40%">${f.label}</td><td style="padding:7px 8px;font-size:12px">${f.value}</td></tr>`).join('');
+  Modal.open({
+    title, size:'lg',
+    body:`
+      ${subtitle?`<p class="text-sm text-gray" style="margin-bottom:10px">${subtitle}</p>`:''}
+      <div class="table-wrap"><table><tbody>${rows}</tbody></table></div>`,
+    footer:`<button class="btn btn-ghost" onclick="Modal.close()">Tutup</button>`,
+  });
+}
+
+// Konfirmasi + alasan buat aksi Delete: kalau admin, hapus langsung (cuma
+// perlu confirm). Kalau bukan admin, wajib isi alasan (jadi permintaan yang
+// menunggu approval admin).
+function _deletePrompt({adminMsg, userMsg, onAdmin, onUser}){
+  if (Auth.isAdmin()) {
+    if (confirm(adminMsg||'Yakin mau hapus data ini?')) onAdmin();
+    return;
+  }
+  const reason = prompt(userMsg||'Alasan hapus data ini?');
+  if (reason===null) return;
+  onUser(reason);
+}
+
 // ─── TABLE BUILDER ───────────────────────────────────────────
 function buildTable({cols, data, empty='Tidak ada data', rowId, rowClass, rowAttrs}) {
   if (!data?.length) return `<div class="empty-state">${IC.bahan()} <p>${empty}</p></div>`;
@@ -600,6 +752,12 @@ function _isMyVoidNotified(r, module){
 }
 function _isMyDRNotified(r){
   return !Auth.isAdmin() && r.user===Auth.user?.username && r.reject_reason && !_isDismissed('daily-report', r.id, r.reject_reason);
+}
+function _isMyDeleteNotified(r, module){
+  return !Auth.isAdmin() && r.created_by===Auth.user?.username && r.delete_reject_reason && !_isDismissed(module+'-del', r.id, r.delete_reject_reason);
+}
+function _isMyDRDeleteNotified(r){
+  return !Auth.isAdmin() && r.user===Auth.user?.username && r.delete_reject_reason && !_isDismissed('daily-report-del', r.id, r.delete_reject_reason);
 }
 // Setelah render halaman, scroll otomatis ke baris pertama yang lagi disorot
 // notifikasi (kalau ada) supaya user langsung ketemu transaksi yang dimaksud.
@@ -909,19 +1067,30 @@ function _renderPenjualan(el,q) {
         {label:'Total',render:r=>`<span class="font-mono">${fmt.currency(r.total)}</span>`},
         {key:'metode',label:'Metode'},{key:'created_by',label:'Oleh'},
         {label:'Status',render:r=>{
-          if (r.void_status==='voided') return badge('voided');
           if (r.void_status==='pending') {
             return Auth.isAdmin()
-              ? `<button class="btn btn-ghost btn-sm" onclick="_pjVoidShowApproval(${r.id})" style="padding:0">${badge('pending')} <span class="text-sm">ℹ️ Lihat Detail</span></button>`
-              : `${badge('pending')} <span class="text-sm text-gray">Menunggu admin</span>`;
+              ? `<button class="btn btn-ghost btn-sm" onclick="_pjVoidShowApproval(${r.id})" style="padding:0">${badge('pending')} <span class="text-sm">🗑️ Lihat Detail</span></button>`
+              : `${badge('pending')} <span class="text-sm text-gray">Menunggu approval hapus</span>`;
           }
-          const rejectNote = r.void_reject_reason ? `<div class="text-sm" style="color:var(--red-600)">Void terakhir ditolak: ${r.void_reject_reason}</div>` : '';
-          return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="_pjVoidRequest(${r.id})">Void</button></div>${rejectNote}`;
+          if (r.status==='waiting') return `<button class="btn btn-ghost btn-sm" onclick="_pjShowApproval(${r.id})" style="padding:0">${badge('waiting')} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`;
+          const b = badge('approved');
+          if (r.reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
+          if (r.void_reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Hapus ditolak: ${r.void_reject_reason}</div>`;
+          return b;
         }},
+        {label:'',render:r=>r.void_status==='pending'?'':`<div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="_pjView(${r.id})">View</button>
+          <button class="btn btn-ghost btn-sm" onclick="_pjOpenEdit(${r.id})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="_pjDeleteRequest(${r.id})">Delete</button>
+        </div>`},
       ],data:pageData,empty:'Belum ada penjualan',
         rowId:r=>`row-penjualan-${r.id}`,
-        rowClass:r=>_isMyVoidNotified(r,'penjualan')?'row-notify':'',
-        rowAttrs:r=>_isMyVoidNotified(r,'penjualan')?`onclick="_dismiss('penjualan',${r.id},'void:${(r.void_reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`:'',
+        rowClass:r=>(_isMyVoidNotified(r,'penjualan')||_isMyNotified(r,'penjualan'))?'row-notify':'',
+        rowAttrs:r=>{
+          if (_isMyVoidNotified(r,'penjualan')) return `onclick="_dismiss('penjualan',${r.id},'void:${(r.void_reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`;
+          if (_isMyNotified(r,'penjualan')) return `onclick="_dismiss('penjualan',${r.id},'${(r.reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`;
+          return '';
+        },
       })}
     </div>
     ${filtered.length ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid var(--gray-100)">
@@ -943,20 +1112,33 @@ function _exportPenjualan(){
   );
 }
 
-async function _pjVoidRequest(id){
-  const reason = prompt('Alasan void transaksi ini?');
-  if (reason===null) return;
-  try{
-    await DataAPI.requestVoidPenjualan(id, reason);
-    Toast.success('Void diajukan — menunggu approval admin');
-    _pjData=await DataAPI.getPenjualan().catch(()=>[]);
-    _renderPenjualan(document.getElementById('page-content'),_pjQ);
-  }catch(e){Toast.error(e.message);}
+function _pjDeleteRequest(id){
+  const r = _pjData.find(x=>x.id===id); if (!r) return;
+  _deletePrompt({
+    adminMsg:`Yakin mau hapus transaksi "${r.menu_nama}" x${r.qty}? Stok akan dikembalikan.`,
+    userMsg:'Alasan hapus transaksi ini?',
+    onAdmin: async ()=>{
+      try{
+        await DataAPI.approveVoidPenjualan(id);
+        Toast.success('Transaksi dihapus — stok dikembalikan');
+        _pjData=await DataAPI.getPenjualan().catch(()=>[]);
+        _renderPenjualan(document.getElementById('page-content'),_pjQ);
+      }catch(e){Toast.error(e.message);}
+    },
+    onUser: async (reason)=>{
+      try{
+        await DataAPI.requestVoidPenjualan(id, reason);
+        Toast.success('Permintaan hapus diajukan — menunggu approval admin');
+        _pjData=await DataAPI.getPenjualan().catch(()=>[]);
+        _renderPenjualan(document.getElementById('page-content'),_pjQ);
+      }catch(e){Toast.error(e.message);}
+    },
+  });
 }
 function _pjVoidShowApproval(id){
   const r = _pjData.find(x=>x.id===id); if (!r) return;
   _approvalModal({
-    title: `Void Penjualan — ${r.menu_nama}`,
+    title: `Hapus Penjualan — ${r.menu_nama}`,
     subtitle: `Diajukan oleh ${r.created_by||'-'} · ${r.tanggal} (${r.shift})`,
     simple: true,
     changes: [
@@ -973,7 +1155,7 @@ function _pjVoidShowApproval(id){
 async function _pjVoidApprove(id){
   try{
     await DataAPI.approveVoidPenjualan(id);
-    Toast.success('Void disetujui — stok dikembalikan');
+    Toast.success('Transaksi dihapus — stok dikembalikan');
     _pjData=await DataAPI.getPenjualan().catch(()=>[]);
     _renderPenjualan(document.getElementById('page-content'),_pjQ);
   }catch(e){Toast.error(e.message);}
@@ -981,7 +1163,106 @@ async function _pjVoidApprove(id){
 async function _pjVoidReject(id,reason){
   try{
     await DataAPI.rejectVoidPenjualan(id,reason);
-    Toast.warning('Pengajuan void ditolak');
+    Toast.warning('Pengajuan hapus ditolak');
+    _pjData=await DataAPI.getPenjualan().catch(()=>[]);
+    _renderPenjualan(document.getElementById('page-content'),_pjQ);
+  }catch(e){Toast.error(e.message);}
+}
+function _pjView(id){
+  const r = _pjData.find(x=>x.id===id); if (!r) return;
+  _viewModal({title:`Detail Penjualan — ${r.menu_nama}`, subtitle:`${r.tanggal} · Shift ${r.shift}`, fields:[
+    {label:'Menu', value:r.menu_nama},
+    {label:'Qty', value:r.qty},
+    {label:'Harga', value:fmt.currency(r.harga)},
+    {label:'Total', value:fmt.currency(r.total)},
+    {label:'Metode', value:r.metode},
+    {label:'Oleh', value:r.created_by||'-'},
+  ]});
+}
+function _pjOpenEdit(id){
+  const r = _pjData.find(x=>x.id===id); if (!r) return;
+  const approvedMenu = _pjMenu.filter(m=>m.status==='approved'&&m.aktif!==false);
+  Modal.open({title:Auth.isAdmin()?'Edit Penjualan':'Edit Penjualan — perlu approval admin', body:`
+    <div class="form-row cols-2">
+      <div class="form-group"><label>Tanggal</label><input id="pj-e-tgl" type="date" value="${r.tanggal}"/></div>
+      <div class="form-group"><label>Shift</label><select id="pj-e-shift">${['Pagi','Siang','Malam','Long Shift'].map(s=>`<option ${s===r.shift?'selected':''}>${s}</option>`).join('')}</select></div>
+    </div>
+    <div class="form-group"><label>Menu</label><select id="pj-e-menu">${approvedMenu.map(m=>`<option value="${m.id}" data-h="${m.harga}" data-n="${m.nama}" ${m.id===r.menu_id?'selected':''}>${m.nama}</option>`).join('')}</select></div>
+    <div class="form-row cols-2">
+      <div class="form-group"><label>Qty</label><input id="pj-e-qty" type="number" min="1" value="${r.qty}"/></div>
+      <div class="form-group"><label>Metode</label><select id="pj-e-metode">${['Mixed','Cash','QRIS','Debit','Transfer'].map(s=>`<option ${s===r.metode?'selected':''}>${s}</option>`).join('')}</select></div>
+    </div>
+    ${Auth.isAdmin()?'':'<p class="text-sm text-gray">Perubahan akan berstatus <b>menunggu approval admin</b>. Stok baru disesuaikan setelah disetujui.</p>'}`,
+    footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_pjSaveEdit(${id})">${Auth.isAdmin()?'Simpan':'Submit Perubahan'}</button>`,
+  });
+}
+async function _pjSaveEdit(id){
+  const r = _pjData.find(x=>x.id===id); if (!r) return;
+  const tgl=document.getElementById('pj-e-tgl').value;
+  const shift=document.getElementById('pj-e-shift').value;
+  const sel=document.getElementById('pj-e-menu'); const o=sel.options[sel.selectedIndex];
+  const menuId=+sel.value, menuNama=o.dataset.n, harga=+o.dataset.h;
+  const qty=+document.getElementById('pj-e-qty').value;
+  const metode=document.getElementById('pj-e-metode').value;
+  if(!tgl||!qty){Toast.error('Isi semua field wajib');return;}
+  const total = harga*qty;
+  try{
+    if (Auth.isAdmin()) {
+      await DataAPI.reapplyPenjualanStock(r.menu_id, r.qty, menuId, qty);
+      await DataAPI.updatePenjualan(id,{tanggal:tgl,shift,menu_id:menuId,menu_nama:menuNama,harga,qty,total,metode,status:'approved',reject_reason:null,pending_before:null});
+      await DataAPI.addAudit('Penjualan', menuNama, 'Edit (langsung, oleh admin)');
+      Modal.close(); Toast.success('Perubahan disimpan');
+    } else {
+      const before = {tanggal:r.tanggal,shift:r.shift,menu_id:r.menu_id,menu_nama:r.menu_nama,harga:r.harga,qty:r.qty,total:r.total,metode:r.metode};
+      await DataAPI.updatePenjualan(id,{tanggal:tgl,shift,menu_id:menuId,menu_nama:menuNama,harga,qty,total,metode,status:'waiting',pending_before:JSON.stringify(before)});
+      await DataAPI.addAudit('Penjualan', menuNama, 'Edit (menunggu approval)');
+      Modal.close(); Toast.success('Perubahan disubmit untuk approval');
+    }
+    _pjData=await DataAPI.getPenjualan().catch(()=>[]);
+    _renderPenjualan(document.getElementById('page-content'),_pjQ);
+  }catch(e){Toast.error(e.message);}
+}
+function _pjShowApproval(id){
+  const r = _pjData.find(x=>x.id===id); if (!r) return;
+  const before = r.pending_before ? (typeof r.pending_before==='string'?JSON.parse(r.pending_before):r.pending_before) : null;
+  const changes = [
+    {label:'Tanggal', before:before?.tanggal, after:r.tanggal},
+    {label:'Shift', before:before?.shift, after:r.shift},
+    {label:'Menu', before:before?.menu_nama, after:r.menu_nama},
+    {label:'Qty', before:before?.qty, after:r.qty},
+    {label:'Total', before:before?.total!=null?fmt.currency(before.total):undefined, after:fmt.currency(r.total)},
+    {label:'Metode', before:before?.metode, after:r.metode},
+  ];
+  _approvalModal({
+    title: `Edit Penjualan — ${r.menu_nama}`,
+    subtitle: `Diajukan oleh ${r.created_by||'-'}`,
+    changes,
+    onApprove: ()=>_pjApprove(id),
+    onReject: (reason)=>_pjReject(id,reason),
+  });
+}
+async function _pjApprove(id){
+  const r = _pjData.find(x=>x.id===id); if (!r) return;
+  const before = r.pending_before ? (typeof r.pending_before==='string'?JSON.parse(r.pending_before):r.pending_before) : null;
+  try{
+    if (before) await DataAPI.reapplyPenjualanStock(before.menu_id, before.qty, r.menu_id, r.qty);
+    await DataAPI.updatePenjualanStatus(id,'approved');
+    await DataAPI.updatePenjualan(id,{pending_before:null});
+    Toast.success('Perubahan penjualan diapprove — stok disesuaikan');
+    _pjData=await DataAPI.getPenjualan().catch(()=>[]);
+    _renderPenjualan(document.getElementById('page-content'),_pjQ);
+  }catch(e){Toast.error(e.message);}
+}
+async function _pjReject(id,reason){
+  const r = _pjData.find(x=>x.id===id); if (!r) return;
+  const before = r.pending_before ? (typeof r.pending_before==='string'?JSON.parse(r.pending_before):r.pending_before) : null;
+  try{
+    if (before) {
+      await DataAPI.updatePenjualan(id,{...before,status:'approved',reject_reason:reason,pending_before:null});
+    } else {
+      await DataAPI.updatePenjualanStatus(id,'rejected',reason);
+    }
+    Toast.warning('Perubahan penjualan direject');
     _pjData=await DataAPI.getPenjualan().catch(()=>[]);
     _renderPenjualan(document.getElementById('page-content'),_pjQ);
   }catch(e){Toast.error(e.message);}
@@ -1140,12 +1421,38 @@ function _exportStock(){
 }
 
 // ─── PAGE: PEMBELIAN ──────────────────────────────────────────
-let _pbData=[], _pbBahan=[];
+let _pbData=[], _pbBahan=[], _pbFil={dari:'',sampai:''};
 async function pagePembelian(el) {
   [_pbData,_pbBahan] = await Promise.all([DataAPI.getPembelian().catch(()=>[]),DataAPI.getBahan().catch(()=>[])]);
   _renderPembelian(el);
 }
+function _pbFiltered(){
+  let data = _pbData;
+  if (_pbFil.dari)   data = data.filter(p=>p.tanggal>=_pbFil.dari);
+  if (_pbFil.sampai) data = data.filter(p=>p.tanggal<=_pbFil.sampai);
+  return data;
+}
+function _pbDateLabel(){
+  if (_pbFil.dari && _pbFil.sampai) return `${_pbFil.dari} — ${_pbFil.sampai}`;
+  if (_pbFil.dari) return `Dari ${_pbFil.dari}`;
+  if (_pbFil.sampai) return `s/d ${_pbFil.sampai}`;
+  return 'Semua Tanggal';
+}
+function _pbToggleDatePanel(){
+  const p = document.getElementById('pb-date-panel');
+  if (p) p.style.display = (p.style.display==='none'||!p.style.display) ? 'flex' : 'none';
+}
+function _pbDateApply(){
+  _pbFil.dari = document.getElementById('pb-date-dari')?.value || '';
+  _pbFil.sampai = document.getElementById('pb-date-sampai')?.value || '';
+  _renderPembelian(document.getElementById('page-content'));
+}
+function _pbDateReset(){
+  _pbFil.dari=''; _pbFil.sampai='';
+  _renderPembelian(document.getElementById('page-content'));
+}
 function _renderPembelian(el){
+  const data = _pbFiltered();
   el.innerHTML=`
   <div class="page-head">
     <div><h2>Pembelian</h2><p>Input pembelian bahan baku — stok otomatis bertambah</p></div>
@@ -1154,7 +1461,23 @@ function _renderPembelian(el){
       <button class="btn btn-primary" onclick="_openPembelian()">${IC.plus()} Input Pembelian</button>
     </div>
   </div>
-  <div class="card"><div class="card-body-p0">
+  <div class="card">
+    <div class="card-head">
+      <div class="filter-field">
+        <span class="filter-label">Tanggal</span>
+        <button type="button" class="btn btn-ghost filter-date-btn" onclick="_pbToggleDatePanel()">📅 ${_pbDateLabel()}</button>
+        <div id="pb-date-panel" class="date-range-panel" style="display:none">
+          <div><label>Dari</label><input type="date" id="pb-date-dari" value="${_pbFil.dari}"/></div>
+          <div><label>Sampai</label><input type="date" id="pb-date-sampai" value="${_pbFil.sampai}"/></div>
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <button type="button" class="btn btn-ghost btn-sm" style="flex:1" onclick="_pbDateReset()">Reset</button>
+            <button type="button" class="btn btn-primary btn-sm" style="flex:1" onclick="_pbDateApply()">Terapkan</button>
+          </div>
+        </div>
+      </div>
+      <span class="text-sm text-gray">${data.length} pembelian</span>
+    </div>
+    <div class="card-body-p0">
     ${buildTable({cols:[
       {key:'tanggal',label:'Tanggal'},{key:'bahan_nama',label:'Bahan'},
       {label:'Qty',render:r=>`<b>${fmt.number(r.qty)}</b> ${r.satuan||''}`},
@@ -1162,19 +1485,30 @@ function _renderPembelian(el){
       {label:'Total',render:r=>`<span class="font-mono">${fmt.currency(r.total)}</span>`},
       {key:'supplier',label:'Supplier'},{key:'created_by',label:'Oleh'},
       {label:'Status',render:r=>{
-        if (r.void_status==='voided') return badge('voided');
         if (r.void_status==='pending') {
           return Auth.isAdmin()
-            ? `<button class="btn btn-ghost btn-sm" onclick="_pbVoidShowApproval(${r.id})" style="padding:0">${badge('pending')} <span class="text-sm">ℹ️ Lihat Detail</span></button>`
-            : `${badge('pending')} <span class="text-sm text-gray">Menunggu admin</span>`;
+            ? `<button class="btn btn-ghost btn-sm" onclick="_pbVoidShowApproval(${r.id})" style="padding:0">${badge('pending')} <span class="text-sm">🗑️ Lihat Detail</span></button>`
+            : `${badge('pending')} <span class="text-sm text-gray">Menunggu approval hapus</span>`;
         }
-        const rejectNote = r.void_reject_reason ? `<div class="text-sm" style="color:var(--red-600)">Void terakhir ditolak: ${r.void_reject_reason}</div>` : '';
-        return `<button class="btn btn-ghost btn-sm" onclick="_pbVoidRequest(${r.id})">Void</button>${rejectNote}`;
+        if (r.status==='waiting') return `<button class="btn btn-ghost btn-sm" onclick="_pbShowApproval(${r.id})" style="padding:0">${badge('waiting')} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`;
+        const b = badge('approved');
+        if (r.reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
+        if (r.void_reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Hapus ditolak: ${r.void_reject_reason}</div>`;
+        return b;
       }},
-    ],data:_pbData,empty:'Belum ada pembelian',
+      {label:'',render:r=>r.void_status==='pending'?'':`<div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="_pbView(${r.id})">View</button>
+        <button class="btn btn-ghost btn-sm" onclick="_pbOpenEdit(${r.id})">Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="_pbDeleteRequest(${r.id})">Delete</button>
+      </div>`},
+    ],data,empty:'Belum ada pembelian',
       rowId:r=>`row-pembelian-${r.id}`,
-      rowClass:r=>_isMyVoidNotified(r,'pembelian')?'row-notify':'',
-      rowAttrs:r=>_isMyVoidNotified(r,'pembelian')?`onclick="_dismiss('pembelian',${r.id},'void:${(r.void_reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`:'',
+      rowClass:r=>(_isMyVoidNotified(r,'pembelian')||_isMyNotified(r,'pembelian'))?'row-notify':'',
+      rowAttrs:r=>{
+        if (_isMyVoidNotified(r,'pembelian')) return `onclick="_dismiss('pembelian',${r.id},'void:${(r.void_reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`;
+        if (_isMyNotified(r,'pembelian')) return `onclick="_dismiss('pembelian',${r.id},'${(r.reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`;
+        return '';
+      },
     })}
   </div></div>`;
   _scrollToNotified();
@@ -1182,23 +1516,36 @@ function _renderPembelian(el){
 function _exportPembelian(){
   _exportCSV('pembelian.csv',
     ['Tanggal','Bahan','Qty','Satuan','Harga/Satuan','Total','Supplier','Oleh','Status'],
-    _pbData.map(r=>[r.tanggal,r.bahan_nama,r.qty,r.satuan,r.harga_satuan,r.total,r.supplier,r.created_by,r.void_status||'Aktif'])
+    _pbFiltered().map(r=>[r.tanggal,r.bahan_nama,r.qty,r.satuan,r.harga_satuan,r.total,r.supplier,r.created_by,r.void_status||'Aktif'])
   );
 }
-async function _pbVoidRequest(id){
-  const reason = prompt('Alasan void pembelian ini?');
-  if (reason===null) return;
-  try{
-    await DataAPI.requestVoidPembelian(id, reason);
-    Toast.success('Void diajukan — menunggu approval admin');
-    _pbData=await DataAPI.getPembelian().catch(()=>[]);
-    _renderPembelian(document.getElementById('page-content'));
-  }catch(e){Toast.error(e.message);}
+function _pbDeleteRequest(id){
+  const r = _pbData.find(x=>x.id===id); if (!r) return;
+  _deletePrompt({
+    adminMsg:`Yakin mau hapus pembelian "${r.bahan_nama}"? Stok akan dikurangi kembali.`,
+    userMsg:'Alasan hapus pembelian ini?',
+    onAdmin: async ()=>{
+      try{
+        await DataAPI.approveVoidPembelian(id);
+        Toast.success('Pembelian dihapus — stok dikurangi kembali');
+        _pbData=await DataAPI.getPembelian().catch(()=>[]);
+        _renderPembelian(document.getElementById('page-content'));
+      }catch(e){Toast.error(e.message);}
+    },
+    onUser: async (reason)=>{
+      try{
+        await DataAPI.requestVoidPembelian(id, reason);
+        Toast.success('Permintaan hapus diajukan — menunggu approval admin');
+        _pbData=await DataAPI.getPembelian().catch(()=>[]);
+        _renderPembelian(document.getElementById('page-content'));
+      }catch(e){Toast.error(e.message);}
+    },
+  });
 }
 function _pbVoidShowApproval(id){
   const r=_pbData.find(x=>x.id===id); if(!r) return;
   _approvalModal({
-    title: `Void Pembelian — ${r.bahan_nama}`,
+    title: `Hapus Pembelian — ${r.bahan_nama}`,
     subtitle: `Diajukan oleh ${r.created_by||'-'} · ${r.tanggal}`,
     simple: true,
     changes: [
@@ -1215,7 +1562,7 @@ function _pbVoidShowApproval(id){
 async function _pbVoidApprove(id){
   try{
     await DataAPI.approveVoidPembelian(id);
-    Toast.success('Void disetujui — stok dikurangi kembali');
+    Toast.success('Pembelian dihapus — stok dikurangi kembali');
     _pbData=await DataAPI.getPembelian().catch(()=>[]);
     _renderPembelian(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
@@ -1223,7 +1570,105 @@ async function _pbVoidApprove(id){
 async function _pbVoidReject(id,reason){
   try{
     await DataAPI.rejectVoidPembelian(id,reason);
-    Toast.warning('Pengajuan void ditolak');
+    Toast.warning('Pengajuan hapus ditolak');
+    _pbData=await DataAPI.getPembelian().catch(()=>[]);
+    _renderPembelian(document.getElementById('page-content'));
+  }catch(e){Toast.error(e.message);}
+}
+function _pbView(id){
+  const r=_pbData.find(x=>x.id===id); if(!r) return;
+  _viewModal({title:`Detail Pembelian — ${r.bahan_nama}`, subtitle:r.tanggal, fields:[
+    {label:'Bahan', value:r.bahan_nama},
+    {label:'Qty', value:`${fmt.number(r.qty)} ${r.satuan||''}`},
+    {label:'Harga/satuan', value:fmt.currency(r.harga_satuan)},
+    {label:'Total', value:fmt.currency(r.total)},
+    {label:'Supplier', value:r.supplier||'-'},
+    {label:'Oleh', value:r.created_by||'-'},
+  ]});
+}
+function _pbOpenEdit(id){
+  const r=_pbData.find(x=>x.id===id); if(!r) return;
+  const approvedBahan = _pbBahan.filter(b=>b.status==='approved'&&b.aktif!==false);
+  Modal.open({title:Auth.isAdmin()?'Edit Pembelian':'Edit Pembelian — perlu approval admin', body:`
+    <div class="form-row cols-2">
+      <div class="form-group"><label>Tanggal</label><input id="pb-e-tgl" type="date" value="${r.tanggal}"/></div>
+      <div class="form-group"><label>Bahan</label><select id="pb-e-bahan">${approvedBahan.map(b=>`<option value="${b.id}" data-n="${b.nama}" data-s="${b.satuan}" ${b.id===r.bahan_id?'selected':''}>${b.nama} (${b.satuan})</option>`).join('')}</select></div>
+    </div>
+    <div class="form-row cols-2">
+      <div class="form-group"><label>Qty (satuan dasar)</label><input id="pb-e-qty" type="number" min="0" step="any" value="${r.qty}"/></div>
+      <div class="form-group"><label>Harga Total (Rp)</label><input id="pb-e-hrg" type="number" value="${r.total}"/></div>
+    </div>
+    <div class="form-group"><label>Supplier</label><input id="pb-e-sup" value="${(r.supplier||'').replace(/"/g,'&quot;')}"/></div>
+    ${Auth.isAdmin()?'':'<p class="text-sm text-gray">Perubahan akan berstatus <b>menunggu approval admin</b>. Stok baru disesuaikan setelah disetujui.</p>'}`,
+    footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_pbSaveEdit(${id})">${Auth.isAdmin()?'Simpan':'Submit Perubahan'}</button>`,
+  });
+}
+async function _pbSaveEdit(id){
+  const r=_pbData.find(x=>x.id===id); if(!r) return;
+  const tgl=document.getElementById('pb-e-tgl').value;
+  const sel=document.getElementById('pb-e-bahan'); const o=sel.options[sel.selectedIndex];
+  const bahanId=+sel.value, bahanNama=o.dataset.n, satuan=o.dataset.s;
+  const qty=+document.getElementById('pb-e-qty').value;
+  const total=+document.getElementById('pb-e-hrg').value;
+  const supplier=document.getElementById('pb-e-sup').value;
+  if(!tgl||!qty||!total){Toast.error('Isi semua field wajib');return;}
+  const hargaSatuan = qty?Math.round(total/qty):0;
+  try{
+    if (Auth.isAdmin()) {
+      await DataAPI.reapplyPembelianStock(r.bahan_id, r.qty, bahanId, qty);
+      await DataAPI.updatePembelian(id,{tanggal:tgl,bahan_id:bahanId,bahan_nama:bahanNama,satuan,qty,harga_satuan:hargaSatuan,total,supplier,status:'approved',reject_reason:null,pending_before:null});
+      await DataAPI.addAudit('Pembelian', bahanNama, 'Edit (langsung, oleh admin)');
+      Modal.close(); Toast.success('Perubahan disimpan');
+    } else {
+      const before = {tanggal:r.tanggal,bahan_id:r.bahan_id,bahan_nama:r.bahan_nama,satuan:r.satuan,qty:r.qty,harga_satuan:r.harga_satuan,total:r.total,supplier:r.supplier};
+      await DataAPI.updatePembelian(id,{tanggal:tgl,bahan_id:bahanId,bahan_nama:bahanNama,satuan,qty,harga_satuan:hargaSatuan,total,supplier,status:'waiting',pending_before:JSON.stringify(before)});
+      await DataAPI.addAudit('Pembelian', bahanNama, 'Edit (menunggu approval)');
+      Modal.close(); Toast.success('Perubahan disubmit untuk approval');
+    }
+    _pbData=await DataAPI.getPembelian().catch(()=>[]);
+    _renderPembelian(document.getElementById('page-content'));
+  }catch(e){Toast.error(e.message);}
+}
+function _pbShowApproval(id){
+  const r=_pbData.find(x=>x.id===id); if(!r) return;
+  const before = r.pending_before ? (typeof r.pending_before==='string'?JSON.parse(r.pending_before):r.pending_before) : null;
+  const changes = [
+    {label:'Tanggal', before:before?.tanggal, after:r.tanggal},
+    {label:'Bahan', before:before?.bahan_nama, after:r.bahan_nama},
+    {label:'Qty', before:before?.qty, after:r.qty},
+    {label:'Total', before:before?.total!=null?fmt.currency(before.total):undefined, after:fmt.currency(r.total)},
+    {label:'Supplier', before:before?.supplier, after:r.supplier||'-'},
+  ];
+  _approvalModal({
+    title: `Edit Pembelian — ${r.bahan_nama}`,
+    subtitle: `Diajukan oleh ${r.created_by||'-'}`,
+    changes,
+    onApprove: ()=>_pbApprove(id),
+    onReject: (reason)=>_pbReject(id,reason),
+  });
+}
+async function _pbApprove(id){
+  const r=_pbData.find(x=>x.id===id); if(!r) return;
+  const before = r.pending_before ? (typeof r.pending_before==='string'?JSON.parse(r.pending_before):r.pending_before) : null;
+  try{
+    if (before) await DataAPI.reapplyPembelianStock(before.bahan_id, before.qty, r.bahan_id, r.qty);
+    await DataAPI.updatePembelianStatus(id,'approved');
+    await DataAPI.updatePembelian(id,{pending_before:null});
+    Toast.success('Perubahan pembelian diapprove — stok disesuaikan');
+    _pbData=await DataAPI.getPembelian().catch(()=>[]);
+    _renderPembelian(document.getElementById('page-content'));
+  }catch(e){Toast.error(e.message);}
+}
+async function _pbReject(id,reason){
+  const r=_pbData.find(x=>x.id===id); if(!r) return;
+  const before = r.pending_before ? (typeof r.pending_before==='string'?JSON.parse(r.pending_before):r.pending_before) : null;
+  try{
+    if (before) {
+      await DataAPI.updatePembelian(id,{...before,status:'approved',reject_reason:reason,pending_before:null});
+    } else {
+      await DataAPI.updatePembelianStatus(id,'rejected',reason);
+    }
+    Toast.warning('Perubahan pembelian direject');
     _pbData=await DataAPI.getPembelian().catch(()=>[]);
     _renderPembelian(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
@@ -1586,7 +2031,7 @@ async function _saveOpname(){
 }
 
 // ─── PAGE: DAILY REPORT ─────────────────────────────────────
-let _drData=[], _drFoto=null, _drPenjualan=[];
+let _drData=[], _drFoto=null, _drPenjualan=[], _drFil={dari:'',sampai:''};
 async function pageDailyReport(el) {
   [_drData,_drPenjualan] = await Promise.all([
     DataAPI.getDailyReport().catch(()=>[]),
@@ -1594,7 +2039,33 @@ async function pageDailyReport(el) {
   ]);
   _renderDR(el);
 }
+function _drFiltered(){
+  let data = _drData;
+  if (_drFil.dari)   data = data.filter(p=>p.tanggal>=_drFil.dari);
+  if (_drFil.sampai) data = data.filter(p=>p.tanggal<=_drFil.sampai);
+  return data;
+}
+function _drDateLabel(){
+  if (_drFil.dari && _drFil.sampai) return `${_drFil.dari} — ${_drFil.sampai}`;
+  if (_drFil.dari) return `Dari ${_drFil.dari}`;
+  if (_drFil.sampai) return `s/d ${_drFil.sampai}`;
+  return 'Semua Tanggal';
+}
+function _drToggleDatePanel(){
+  const p = document.getElementById('dr-date-panel');
+  if (p) p.style.display = (p.style.display==='none'||!p.style.display) ? 'flex' : 'none';
+}
+function _drDateApply(){
+  _drFil.dari = document.getElementById('dr-date-dari')?.value || '';
+  _drFil.sampai = document.getElementById('dr-date-sampai')?.value || '';
+  _renderDR(document.getElementById('page-content'));
+}
+function _drDateReset(){
+  _drFil.dari=''; _drFil.sampai='';
+  _renderDR(document.getElementById('page-content'));
+}
 function _renderDR(el){
+  const data = _drFiltered();
   el.innerHTML=`
   <div class="page-head">
     <div><h2>Daily Report</h2><p>Laporan kas harian — rekonsiliasi total sistem (Penjualan) vs total aktual</p></div>
@@ -1604,6 +2075,21 @@ function _renderDR(el){
     </div>
   </div>
   <div class="card">
+    <div class="card-head">
+      <div class="filter-field">
+        <span class="filter-label">Tanggal</span>
+        <button type="button" class="btn btn-ghost filter-date-btn" onclick="_drToggleDatePanel()">📅 ${_drDateLabel()}</button>
+        <div id="dr-date-panel" class="date-range-panel" style="display:none">
+          <div><label>Dari</label><input type="date" id="dr-date-dari" value="${_drFil.dari}"/></div>
+          <div><label>Sampai</label><input type="date" id="dr-date-sampai" value="${_drFil.sampai}"/></div>
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <button type="button" class="btn btn-ghost btn-sm" style="flex:1" onclick="_drDateReset()">Reset</button>
+            <button type="button" class="btn btn-primary btn-sm" style="flex:1" onclick="_drDateApply()">Terapkan</button>
+          </div>
+        </div>
+      </div>
+      <span class="text-sm text-gray">${data.length} laporan</span>
+    </div>
     <div class="card-body-p0">
       ${buildTable({cols:[
         {key:'tanggal',label:'Tanggal'},{key:'user',label:'User'},{key:'shift',label:'Shift'},
@@ -1611,16 +2097,33 @@ function _renderDR(el){
         {label:'Total Aktual',render:r=>fmt.currency(r.total_sales)},
         {label:'Variance',render:r=>`<span class="font-mono" style="color:${r.variance!==0?'var(--red-600)':'var(--green-600)'}">${r.variance>=0?'+':''}${fmt.currency(r.variance)}</span>`},
         {label:'Status',render:r=>{
+          if (r.delete_status==='pending') {
+            return Auth.isAdmin()
+              ? `<button class="btn btn-ghost btn-sm" onclick="_drDeleteShowApproval(${r.id})" style="padding:0">${badge('pending')} <span class="text-sm">🗑️ Lihat Detail</span></button>`
+              : `${badge('pending')} <span class="text-sm text-gray">Menunggu approval hapus</span>`;
+          }
           if (r.status==='waiting') return `<button class="btn btn-ghost btn-sm" onclick="_drShowApproval(${r.id})" style="padding:0">${badge('waiting')} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`;
           const b = r.variance===0?badge('approved'):badge('warning');
           if (r.reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
+          if (r.delete_reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Hapus ditolak: ${r.delete_reject_reason}</div>`;
           return b;
         }},
-        {label:'',render:r=>r.status==='waiting'?'':`<button class="btn btn-ghost btn-sm" onclick="_openDREdit(${r.id})">Edit</button>`},
-      ],data:_drData,empty:'Belum ada daily report',
+        {label:'',render:r=>{
+          if (r.status==='waiting'||r.delete_status==='pending') return '';
+          return `<div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-ghost btn-sm" onclick="_drView(${r.id})">View</button>
+            <button class="btn btn-ghost btn-sm" onclick="_openDREdit(${r.id})">Edit</button>
+            <button class="btn btn-danger btn-sm" onclick="_drDeleteRequest(${r.id})">Delete</button>
+          </div>`;
+        }},
+      ],data,empty:'Belum ada daily report',
         rowId:r=>`row-dr-${r.id}`,
-        rowClass:r=>_isMyDRNotified(r)?'row-notify':'',
-        rowAttrs:r=>_isMyDRNotified(r)?`onclick="_dismiss('daily-report',${r.id},'${(r.reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`:'',
+        rowClass:r=>(_isMyDRNotified(r)||_isMyDRDeleteNotified(r))?'row-notify':'',
+        rowAttrs:r=>{
+          if (_isMyDRDeleteNotified(r)) return `onclick="_dismiss('daily-report-del',${r.id},'${(r.delete_reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`;
+          if (_isMyDRNotified(r)) return `onclick="_dismiss('daily-report',${r.id},'${(r.reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`;
+          return '';
+        },
       })}
     </div>
   </div>`;
@@ -1629,7 +2132,7 @@ function _renderDR(el){
 function _exportDR(){
   _exportCSV('daily-report.csv',
     ['Tanggal','User','Shift','Total Sistem','Total Aktual','Variance','Status'],
-    _drData.map(r=>[r.tanggal,r.user,r.shift,r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0)),r.total_sales,r.variance,r.status])
+    _drFiltered().map(r=>[r.tanggal,r.user,r.shift,r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0)),r.total_sales,r.variance,r.status])
   );
 }
 function _drShowApproval(id){
@@ -1747,7 +2250,7 @@ async function _saveDR(){
 }
 function _openDREdit(id){
   const r=_drData.find(x=>x.id===id); if(!r) return;
-  Modal.open({title:`Edit Daily Report — ${r.tanggal} (perlu approval admin)`,size:'lg',body:`
+  Modal.open({title:Auth.isAdmin()?`Edit Daily Report — ${r.tanggal}`:`Edit Daily Report — ${r.tanggal} (perlu approval admin)`,size:'lg',body:`
     <div class="form-row cols-2">
       <div class="form-group"><label>Tanggal</label><input value="${r.tanggal}" readonly/></div>
       <div class="form-group"><label>Shift</label><input value="${r.shift}" readonly/></div>
@@ -1755,8 +2258,8 @@ function _openDREdit(id){
     <div class="form-group"><label>Total Sistem (dari Penjualan)</label><input value="${fmt.currency(r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0)))}" readonly/></div>
     <div class="form-group"><label>Total Sales Aktual (hitung fisik/POS)<span class="req">*</span></label><input id="dr-e-sales" type="number" value="${r.total_sales}"/></div>
     <div class="form-group"><label>Catatan</label><textarea id="dr-e-cat" rows="2">${r.catatan||''}</textarea></div>
-    <p class="text-sm text-gray">Perubahan akan berstatus <b>menunggu approval admin</b> sebelum dianggap final.</p>`,
-    footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_saveDREdit(${id})">Submit Perubahan</button>`,
+    ${Auth.isAdmin()?'':'<p class="text-sm text-gray">Perubahan akan berstatus <b>menunggu approval admin</b> sebelum dianggap final.</p>'}`,
+    footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_saveDREdit(${id})">${Auth.isAdmin()?'Simpan':'Submit Perubahan'}</button>`,
   });
 }
 async function _saveDREdit(id){
@@ -1764,14 +2267,63 @@ async function _saveDREdit(id){
   const sales=+document.getElementById('dr-e-sales').value;
   const catatan=document.getElementById('dr-e-cat').value;
   if(!sales){Toast.error('Total Sales wajib diisi');return;}
-  const before = { total_sales:r.total_sales, catatan:r.catatan||'' };
   const tot = r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0));
   try{
-    await DataAPI.updateDailyReport(id,{total_sales:sales,catatan,variance:tot-sales,status:'waiting',pending_before:JSON.stringify(before)});
-    await DataAPI.addAudit('DailyReport',r.tanggal,'Edit (menunggu approval)');
-    Modal.close(); Toast.success('Perubahan disubmit untuk approval');
+    if (Auth.isAdmin()) {
+      await DataAPI.updateDailyReport(id,{total_sales:sales,catatan,variance:tot-sales,status:'submitted',reject_reason:null,pending_before:null});
+      await DataAPI.addAudit('DailyReport',r.tanggal,'Edit (langsung, oleh admin)');
+      Modal.close(); Toast.success('Perubahan disimpan');
+    } else {
+      const before = { total_sales:r.total_sales, catatan:r.catatan||'' };
+      await DataAPI.updateDailyReport(id,{total_sales:sales,catatan,variance:tot-sales,status:'waiting',pending_before:JSON.stringify(before)});
+      await DataAPI.addAudit('DailyReport',r.tanggal,'Edit (menunggu approval)');
+      Modal.close(); Toast.success('Perubahan disubmit untuk approval');
+    }
     _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
+}
+function _drView(id){
+  const r=_drData.find(x=>x.id===id); if(!r) return;
+  _viewModal({title:`Detail Daily Report — ${r.tanggal}`, subtitle:`Shift ${r.shift}`, fields:[
+    {label:'User', value:r.user||'-'},
+    {label:'Total Sistem', value:fmt.currency(r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0)))},
+    {label:'Total Aktual', value:fmt.currency(r.total_sales)},
+    {label:'Variance', value:fmt.currency(r.variance)},
+    {label:'Catatan', value:r.catatan||'-'},
+    {label:'Status', value:badge(r.status)},
+  ]});
+}
+function _drDeleteRequest(id){
+  const r=_drData.find(x=>x.id===id); if(!r) return;
+  _deletePrompt({
+    adminMsg:`Yakin mau hapus daily report tanggal ${r.tanggal}? Tindakan ini tidak bisa dibatalkan.`,
+    userMsg:'Alasan hapus daily report ini?',
+    onAdmin: async ()=>{
+      try{ await DataAPI.approveDeleteDR(id); Toast.success('Daily report dihapus');
+        _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));
+      }catch(e){Toast.error(e.message);}
+    },
+    onUser: async (reason)=>{
+      try{ await DataAPI.requestDeleteDR(id,reason); Toast.success('Permintaan hapus diajukan — menunggu approval admin');
+        _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content'));
+      }catch(e){Toast.error(e.message);}
+    },
+  });
+}
+function _drDeleteShowApproval(id){
+  const r=_drData.find(x=>x.id===id); if(!r) return;
+  _approvalModal({
+    title:`Hapus Daily Report — ${r.tanggal}`,
+    subtitle:`Diajukan oleh ${r.user||'-'} · Shift ${r.shift}`,
+    simple:true,
+    changes:[
+      {label:'Total Sistem', after:fmt.currency(r.total_pos ?? ((r.mixed||0)+(r.cash||0)+(r.qris||0)+(r.debit||0)+(r.transfer||0)))},
+      {label:'Total Aktual', after:fmt.currency(r.total_sales)},
+    ],
+    note: r.delete_reason || '(tidak ada alasan)',
+    onApprove: async ()=>{ await DataAPI.approveDeleteDR(id); Toast.success('Daily report dihapus'); _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content')); },
+    onReject: async (reason)=>{ await DataAPI.rejectDeleteDR(id,reason); Toast.warning('Permintaan hapus ditolak'); _drData=await DataAPI.getDailyReport().catch(()=>[]); _renderDR(document.getElementById('page-content')); },
+  });
 }
 
 // ─── PAGE: MASTER BAHAN ──────────────────────────────────────
@@ -1784,8 +2336,8 @@ function _renderMB(el){
   const data=searchFilter(_mbData,_mbQ,['kode','nama','satuan','supplier']);
   el.innerHTML=`
   <div class="page-head">
-    <div><h2>Master Bahan</h2><p>Data bahan baku — perlu approval admin sebelum aktif</p></div>
-    ${!Auth.isAdmin()?`<button class="btn btn-primary" onclick="_openMB()">${IC.plus()} Tambah Bahan</button>`:''}
+    <div><h2>Master Bahan</h2><p>Data bahan baku — perubahan perlu approval admin (kecuali dilakukan admin)</p></div>
+    <button class="btn btn-primary" onclick="_openMB()">${IC.plus()} Tambah Bahan</button>
   </div>
   <div class="card">
     <div class="card-head">
@@ -1799,17 +2351,31 @@ function _renderMB(el){
         {label:'Min',render:r=>`<span class="font-mono">${fmt.number(r.min_stock)}</span>`},
         {key:'supplier',label:'Supplier'},
         {label:'Status',render:r=>{
+          if (r.delete_status==='pending') {
+            return Auth.isAdmin()
+              ? `<button class="btn btn-ghost btn-sm" onclick="_mbDeleteShowApproval(${r.id})" style="padding:0">${badge('pending')} <span class="text-sm">🗑️ Lihat Detail</span></button>`
+              : `${badge('pending')} <span class="text-sm text-gray">Menunggu approval hapus</span>`;
+          }
           const b = badge(r.status);
           if (r.status==='waiting') return `<button class="btn btn-ghost btn-sm" onclick="_mbShowApproval(${r.id})" style="padding:0">${b} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`;
           if (r.reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
+          if (r.delete_reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Hapus ditolak: ${r.delete_reject_reason}</div>`;
           return b;
         }},
         {label:'Aktif',render:r=>`<input type="checkbox" ${r.aktif!==false?'checked':''} ${Auth.isAdmin()?`onchange="_mbToggleAktif(${r.id},this.checked)"`:'disabled'} style="width:18px;height:18px"/>`},
-        {label:'',render:r=>`<button class="btn btn-ghost btn-sm" onclick="_openMBEdit(${r.id})">Edit</button>`},
+        {label:'',render:r=>`<div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="_mbView(${r.id})">View</button>
+          <button class="btn btn-ghost btn-sm" onclick="_openMBEdit(${r.id})">Edit</button>
+          ${r.delete_status==='pending'?'':`<button class="btn btn-danger btn-sm" onclick="_mbDeleteRequest(${r.id})">Delete</button>`}
+        </div>`},
       ],data,empty:'Belum ada bahan',
         rowId:r=>`row-bahan-${r.id}`,
-        rowClass:r=>_isMyNotified(r,'bahan')?'row-notify':'',
-        rowAttrs:r=>_isMyNotified(r,'bahan')?`onclick="_dismiss('bahan',${r.id},'${(r.reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`:'',
+        rowClass:r=>(_isMyNotified(r,'bahan')||_isMyDeleteNotified(r,'bahan'))?'row-notify':'',
+        rowAttrs:r=>{
+          if (_isMyDeleteNotified(r,'bahan')) return `onclick="_dismiss('bahan-del',${r.id},'${(r.delete_reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`;
+          if (_isMyNotified(r,'bahan')) return `onclick="_dismiss('bahan',${r.id},'${(r.reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`;
+          return '';
+        },
       })}
     </div>
   </div>`;
@@ -1859,9 +2425,10 @@ async function _saveMB(){
   const kode=document.getElementById('mb-kode').value.trim();
   const nama=document.getElementById('mb-nama').value.trim();
   if(!kode||!nama){Toast.error('Kode dan nama wajib');return;}
+  const isAdmin = Auth.isAdmin();
   try{
-    await DataAPI.saveBahan({kode,nama,satuan:document.getElementById('mb-sat').value,min_stock:+document.getElementById('mb-min').value,max_stock:+document.getElementById('mb-max').value,supplier:document.getElementById('mb-sup').value,status:'waiting',aktif:true,pending_before:null,stock_current:0,created_by:Auth.user.username});
-    Modal.close(); Toast.success('Bahan disubmit untuk approval');
+    await DataAPI.saveBahan({kode,nama,satuan:document.getElementById('mb-sat').value,min_stock:+document.getElementById('mb-min').value,max_stock:+document.getElementById('mb-max').value,supplier:document.getElementById('mb-sup').value,status:isAdmin?'approved':'waiting',aktif:true,pending_before:null,stock_current:0,created_by:Auth.user.username});
+    Modal.close(); Toast.success(isAdmin?'Bahan ditambahkan':'Bahan disubmit untuk approval');
     _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
 }
@@ -1902,13 +2469,68 @@ async function _saveMBEdit(id){
   const b=_mbData.find(x=>x.id===id); if(!b) return;
   const nama=document.getElementById('mb-e-nama').value.trim();
   if(!nama){Toast.error('Nama wajib');return;}
-  const before = { nama:b.nama, satuan:b.satuan, min_stock:b.min_stock, max_stock:b.max_stock, supplier:b.supplier||'' };
+  const fields = {nama,satuan:document.getElementById('mb-e-sat').value,min_stock:+document.getElementById('mb-e-min').value,max_stock:+document.getElementById('mb-e-max').value,supplier:document.getElementById('mb-e-sup').value};
   try{
-    await DataAPI.updateBahan(id,{nama,satuan:document.getElementById('mb-e-sat').value,min_stock:+document.getElementById('mb-e-min').value,max_stock:+document.getElementById('mb-e-max').value,supplier:document.getElementById('mb-e-sup').value,status:'waiting',pending_before:JSON.stringify(before)});
-    await DataAPI.addAudit('Bahan',nama,'Edit (menunggu approval)');
-    Modal.close(); Toast.success('Perubahan disubmit untuk approval');
+    if (Auth.isAdmin()) {
+      // Admin: langsung diterapkan, tidak perlu approval diri sendiri.
+      await DataAPI.updateBahan(id,{...fields,status:'approved',reject_reason:null,pending_before:null});
+      await DataAPI.addAudit('Bahan',nama,'Edit (langsung, oleh admin)');
+      Modal.close(); Toast.success('Perubahan disimpan');
+    } else {
+      const before = { nama:b.nama, satuan:b.satuan, min_stock:b.min_stock, max_stock:b.max_stock, supplier:b.supplier||'' };
+      await DataAPI.updateBahan(id,{...fields,status:'waiting',pending_before:JSON.stringify(before)});
+      await DataAPI.addAudit('Bahan',nama,'Edit (menunggu approval)');
+      Modal.close(); Toast.success('Perubahan disubmit untuk approval');
+    }
     _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
+}
+function _mbView(id){
+  const b=_mbData.find(x=>x.id===id); if(!b) return;
+  _viewModal({title:`Detail Bahan — ${b.nama}`, subtitle:`Kode ${b.kode}`, fields:[
+    {label:'Nama', value:b.nama},
+    {label:'Satuan', value:b.satuan},
+    {label:'Stok Saat Ini', value:`${fmt.number(b.stock_current||0)} ${b.satuan}`},
+    {label:'Min Stock', value:fmt.number(b.min_stock)},
+    {label:'Max Stock', value:fmt.number(b.max_stock)},
+    {label:'Supplier', value:b.supplier||'-'},
+    {label:'Status', value:badge(b.status)},
+    {label:'Aktif', value:b.aktif!==false?'Ya':'Tidak'},
+    {label:'Dibuat oleh', value:b.created_by||'-'},
+  ]});
+}
+function _mbDeleteRequest(id){
+  const b=_mbData.find(x=>x.id===id); if(!b) return;
+  _deletePrompt({
+    adminMsg:`Yakin mau hapus bahan "${b.nama}"? Tindakan ini tidak bisa dibatalkan.`,
+    userMsg:'Alasan hapus bahan ini?',
+    onAdmin: async ()=>{
+      try{ await DataAPI.approveDeleteBahan(id); Toast.success('Bahan dihapus');
+        _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));
+      }catch(e){Toast.error(e.message);}
+    },
+    onUser: async (reason)=>{
+      try{ await DataAPI.requestDeleteBahan(id,reason); Toast.success('Permintaan hapus diajukan — menunggu approval admin');
+        _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content'));
+      }catch(e){Toast.error(e.message);}
+    },
+  });
+}
+function _mbDeleteShowApproval(id){
+  const b=_mbData.find(x=>x.id===id); if(!b) return;
+  _approvalModal({
+    title:`Hapus Bahan — ${b.nama}`,
+    subtitle:`Diajukan oleh ${b.created_by||'-'} · kode ${b.kode}`,
+    simple:true,
+    changes:[
+      {label:'Nama', after:b.nama},
+      {label:'Satuan', after:b.satuan},
+      {label:'Stok', after:`${fmt.number(b.stock_current||0)} ${b.satuan}`},
+    ],
+    note: b.delete_reason || '(tidak ada alasan)',
+    onApprove: async ()=>{ await DataAPI.approveDeleteBahan(id); Toast.success('Bahan dihapus'); _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content')); },
+    onReject: async (reason)=>{ await DataAPI.rejectDeleteBahan(id,reason); Toast.warning('Permintaan hapus ditolak'); _mbData=await DataAPI.getBahan().catch(()=>[]); _renderMB(document.getElementById('page-content')); },
+  });
 }
 
 // ─── PAGE: MASTER MENU ───────────────────────────────────────
@@ -1917,25 +2539,39 @@ async function pageMasterMenu(el){
   _mmData=await DataAPI.getMenu().catch(()=>[]);
   el.innerHTML=`
   <div class="page-head">
-    <div><h2>Master Menu</h2><p>Daftar produk yang dijual</p></div>
-    ${!Auth.isAdmin()?`<button class="btn btn-primary" onclick="_openMM()">${IC.plus()} Tambah Menu</button>`:''}
+    <div><h2>Master Menu</h2><p>Daftar produk yang dijual — perubahan perlu approval admin (kecuali dilakukan admin)</p></div>
+    <button class="btn btn-primary" onclick="_openMM()">${IC.plus()} Tambah Menu</button>
   </div>
   <div class="card"><div class="card-body-p0">
     ${buildTable({cols:[
       {key:'kode',label:'Kode'},{key:'nama',label:'Menu'},{key:'kategori',label:'Kategori'},
       {label:'Harga',render:r=>fmt.currency(r.harga)},
       {label:'Status',render:r=>{
+        if (r.delete_status==='pending') {
+          return Auth.isAdmin()
+            ? `<button class="btn btn-ghost btn-sm" onclick="_mmDeleteShowApproval(${r.id})" style="padding:0">${badge('pending')} <span class="text-sm">🗑️ Lihat Detail</span></button>`
+            : `${badge('pending')} <span class="text-sm text-gray">Menunggu approval hapus</span>`;
+        }
         const b = badge(r.status);
         if (r.status==='waiting') return `<button class="btn btn-ghost btn-sm" onclick="_mmShowApproval(${r.id})" style="padding:0">${b} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`;
         if (r.reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Alasan: ${r.reject_reason}</div>`;
+        if (r.delete_reject_reason) return `${b}<div class="text-sm" style="color:var(--red-600)">Hapus ditolak: ${r.delete_reject_reason}</div>`;
         return b;
       }},
       {label:'Aktif',render:r=>`<input type="checkbox" ${r.aktif!==false?'checked':''} ${Auth.isAdmin()?`onchange="_mmToggleAktif(${r.id},this.checked)"`:'disabled'} style="width:18px;height:18px"/>`},
-      {label:'',render:r=>`<button class="btn btn-ghost btn-sm" onclick="_openMMEdit(${r.id})">Edit</button>`},
+      {label:'',render:r=>`<div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="_mmView(${r.id})">View</button>
+        <button class="btn btn-ghost btn-sm" onclick="_openMMEdit(${r.id})">Edit</button>
+        ${r.delete_status==='pending'?'':`<button class="btn btn-danger btn-sm" onclick="_mmDeleteRequest(${r.id})">Delete</button>`}
+      </div>`},
     ],data:_mmData,empty:'Belum ada menu',
       rowId:r=>`row-menu-${r.id}`,
-      rowClass:r=>_isMyNotified(r,'menu')?'row-notify':'',
-      rowAttrs:r=>_isMyNotified(r,'menu')?`onclick="_dismiss('menu',${r.id},'${(r.reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`:'',
+      rowClass:r=>(_isMyNotified(r,'menu')||_isMyDeleteNotified(r,'menu'))?'row-notify':'',
+      rowAttrs:r=>{
+        if (_isMyDeleteNotified(r,'menu')) return `onclick="_dismiss('menu-del',${r.id},'${(r.delete_reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`;
+        if (_isMyNotified(r,'menu')) return `onclick="_dismiss('menu',${r.id},'${(r.reject_reason||'').replace(/'/g,"\\'")}');this.classList.remove('row-notify')"`;
+        return '';
+      },
     })}
   </div></div>`;
   _scrollToNotified();
@@ -1961,6 +2597,50 @@ function _mmShowApproval(id){
     onReject: (reason)=>_mmReject(id,reason),
   });
 }
+function _mmView(id){
+  const m=_mmData.find(x=>x.id===id); if(!m) return;
+  _viewModal({title:`Detail Menu — ${m.nama}`, subtitle:`Kode ${m.kode}`, fields:[
+    {label:'Nama', value:m.nama},
+    {label:'Kategori', value:m.kategori},
+    {label:'Harga Jual', value:fmt.currency(m.harga)},
+    {label:'Status', value:badge(m.status)},
+    {label:'Aktif', value:m.aktif!==false?'Ya':'Tidak'},
+    {label:'Dibuat oleh', value:m.created_by||'-'},
+  ]});
+}
+function _mmDeleteRequest(id){
+  const m=_mmData.find(x=>x.id===id); if(!m) return;
+  _deletePrompt({
+    adminMsg:`Yakin mau hapus menu "${m.nama}"? Tindakan ini tidak bisa dibatalkan.`,
+    userMsg:'Alasan hapus menu ini?',
+    onAdmin: async ()=>{
+      try{ await DataAPI.approveDeleteMenu(id); Toast.success('Menu dihapus');
+        _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));
+      }catch(e){Toast.error(e.message);}
+    },
+    onUser: async (reason)=>{
+      try{ await DataAPI.requestDeleteMenu(id,reason); Toast.success('Permintaan hapus diajukan — menunggu approval admin');
+        _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));
+      }catch(e){Toast.error(e.message);}
+    },
+  });
+}
+function _mmDeleteShowApproval(id){
+  const m=_mmData.find(x=>x.id===id); if(!m) return;
+  _approvalModal({
+    title:`Hapus Menu — ${m.nama}`,
+    subtitle:`Diajukan oleh ${m.created_by||'-'} · kode ${m.kode}`,
+    simple:true,
+    changes:[
+      {label:'Nama', after:m.nama},
+      {label:'Kategori', after:m.kategori},
+      {label:'Harga', after:fmt.currency(m.harga)},
+    ],
+    note: m.delete_reason || '(tidak ada alasan)',
+    onApprove: async ()=>{ await DataAPI.approveDeleteMenu(id); Toast.success('Menu dihapus'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content')); },
+    onReject: async (reason)=>{ await DataAPI.rejectDeleteMenu(id,reason); Toast.warning('Permintaan hapus ditolak'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content')); },
+  });
+}
 function _openMM(){
   const kode=_nextKode(_mmData,'MN');
   Modal.open({title:'Tambah Menu',body:`
@@ -1972,12 +2652,13 @@ function _openMM(){
     <div class="form-group"><label>Kategori</label><select id="mm-kat"><option>Coffee</option><option>Non-Coffee</option><option>Specialty</option><option>Food</option></select></div>
     <div class="form-group"><label>Harga Jual<span class="req">*</span></label><input id="mm-hrg" type="number" placeholder="25000"/></div>
   </div>`,
-  footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_saveMM()">Submit Approval</button>`,
+  footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_saveMM()">Submit</button>`,
 });}
 async function _saveMM(){
   const kode=document.getElementById('mm-kode').value.trim(); const nama=document.getElementById('mm-nama').value.trim(); const harga=+document.getElementById('mm-hrg').value;
   if(!kode||!nama||!harga){Toast.error('Semua field wajib');return;}
-  try{await DataAPI.saveMenu({kode,nama,kategori:document.getElementById('mm-kat').value,harga,status:'waiting',aktif:true,pending_before:null,created_by:Auth.user.username}); Modal.close(); Toast.success('Menu disubmit'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
+  const isAdmin = Auth.isAdmin();
+  try{await DataAPI.saveMenu({kode,nama,kategori:document.getElementById('mm-kat').value,harga,status:isAdmin?'approved':'waiting',aktif:true,pending_before:null,created_by:Auth.user.username}); Modal.close(); Toast.success(isAdmin?'Menu ditambahkan':'Menu disubmit'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
   catch(e){Toast.error(e.message);}
 }
 async function _mmApprove(id){await DataAPI.updateMenuStatus(id,'approved'); Toast.success('Menu diapprove'); _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));}
@@ -1994,7 +2675,7 @@ async function _mmReject(id,reason){
 
 function _openMMEdit(id){
   const m=_mmData.find(x=>x.id===id); if(!m) return;
-  Modal.open({title:'Edit Menu — perlu approval admin',body:`
+  Modal.open({title:Auth.isAdmin()?'Edit Menu':'Edit Menu — perlu approval admin',body:`
   <div class="form-row cols-2">
     <div class="form-group"><label>Kode</label><input id="mm-e-kode" value="${m.kode}" readonly/></div>
     <div class="form-group"><label>Nama Menu<span class="req">*</span></label><input id="mm-e-nama" value="${(m.nama||'').replace(/"/g,'&quot;')}"/></div>
@@ -2003,19 +2684,26 @@ function _openMMEdit(id){
     <div class="form-group"><label>Kategori</label><select id="mm-e-kat">${['Coffee','Non-Coffee','Specialty','Food'].map(k=>`<option ${k===m.kategori?'selected':''}>${k}</option>`).join('')}</select></div>
     <div class="form-group"><label>Harga Jual<span class="req">*</span></label><input id="mm-e-hrg" type="number" value="${m.harga}"/></div>
   </div>
-  <p class="text-sm text-gray">Perubahan akan berstatus <b>menunggu approval admin</b>. Selama menunggu, menu ini tidak muncul di pilihan input penjualan.</p>`,
-  footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_saveMMEdit(${id})">Submit Perubahan</button>`,
+  ${Auth.isAdmin()?'':'<p class="text-sm text-gray">Perubahan akan berstatus <b>menunggu approval admin</b>. Selama menunggu, menu ini tidak muncul di pilihan input penjualan.</p>'}`,
+  footer:`<button class="btn btn-ghost" onclick="Modal.close()">Batal</button><button class="btn btn-primary" onclick="_saveMMEdit(${id})">${Auth.isAdmin()?'Simpan':'Submit Perubahan'}</button>`,
   });
 }
 async function _saveMMEdit(id){
   const m=_mmData.find(x=>x.id===id); if(!m) return;
   const nama=document.getElementById('mm-e-nama').value.trim(); const harga=+document.getElementById('mm-e-hrg').value;
   if(!nama||!harga){Toast.error('Nama dan harga wajib');return;}
-  const before = { nama:m.nama, kategori:m.kategori, harga:m.harga };
+  const fields = {nama,kategori:document.getElementById('mm-e-kat').value,harga};
   try{
-    await DataAPI.updateMenu(id,{nama,kategori:document.getElementById('mm-e-kat').value,harga,status:'waiting',pending_before:JSON.stringify(before)});
-    await DataAPI.addAudit('Menu',nama,'Edit (menunggu approval)');
-    Modal.close(); Toast.success('Perubahan disubmit untuk approval');
+    if (Auth.isAdmin()) {
+      await DataAPI.updateMenu(id,{...fields,status:'approved',reject_reason:null,pending_before:null});
+      await DataAPI.addAudit('Menu',nama,'Edit (langsung, oleh admin)');
+      Modal.close(); Toast.success('Perubahan disimpan');
+    } else {
+      const before = { nama:m.nama, kategori:m.kategori, harga:m.harga };
+      await DataAPI.updateMenu(id,{...fields,status:'waiting',pending_before:JSON.stringify(before)});
+      await DataAPI.addAudit('Menu',nama,'Edit (menunggu approval)');
+      Modal.close(); Toast.success('Perubahan disubmit untuk approval');
+    }
     _mmData=await DataAPI.getMenu().catch(()=>[]); pageMasterMenu(document.getElementById('page-content'));
   }catch(e){Toast.error(e.message);}
 }
@@ -2032,7 +2720,7 @@ async function pageResep(el){
 
   el.innerHTML=`
   <div class="page-head">
-    <div><h2>Resep</h2><p>Komposisi bahan per menu — dasar kalkulasi pengurangan stok otomatis. Perubahan resep perlu approval admin.</p></div>
+    <div><h2>Resep</h2><p>Komposisi bahan per menu — dasar kalkulasi pengurangan stok otomatis. Perubahan perlu approval admin (kecuali dilakukan admin).</p></div>
     <button class="btn btn-primary" onclick="_openResep()">${IC.plus()} Buat Resep</button>
   </div>
   ${Object.keys(byMenu).length?Object.entries(byMenu).map(([nama,lines])=>{
@@ -2040,19 +2728,27 @@ async function pageResep(el){
     const menuId = lines[0]?.menu_id;
     const aktif = lines[0]?.aktif !== false;
     const rejectReason = lines[0]?.reject_reason;
-    const notified = _isMyNotified({...lines[0], id:menuId}, 'resep');
+    const deleteReject = lines[0]?.delete_reject_reason;
+    const deletePending = lines[0]?.delete_status==='pending';
+    const notified = _isMyNotified({...lines[0], id:menuId}, 'resep') || _isMyDeleteNotified({...lines[0], id:menuId}, 'resep');
+    const dismissMarker = _isMyDeleteNotified({...lines[0], id:menuId}, 'resep')
+      ? `_dismiss('resep-del',${menuId},'${(deleteReject||'').replace(/'/g,"\\'")}')`
+      : `_dismiss('resep',${menuId},'${(rejectReason||'').replace(/'/g,"\\'")}')`;
     return `
-    <div class="card mb-4${notified?' card-notify':''}" id="row-resep-${menuId}" ${notified?`onclick="_dismiss('resep',${menuId},'${(rejectReason||'').replace(/'/g,"\\'")}');this.classList.remove('card-notify')"`:''}>
+    <div class="card mb-4${notified?' card-notify':''}" id="row-resep-${menuId}" ${notified?`onclick="${dismissMarker};this.classList.remove('card-notify')"`:''}>
       <div class="card-head">
-        <span class="card-title">${IC.menu()} ${nama} ${status==='waiting'?`<button class="btn btn-ghost btn-sm" onclick="_rpShowApproval(${menuId})" style="padding:0">${badge(status)} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`:badge(status)}</span>
+        <span class="card-title">${IC.menu()} ${nama} ${deletePending?(Auth.isAdmin()?`<button class="btn btn-ghost btn-sm" onclick="_rpDeleteShowApproval(${menuId})" style="padding:0">${badge('pending')} <span class=\"text-sm\">🗑️ Lihat Detail</span></button>`:`${badge('pending')} <span class="text-sm text-gray">Menunggu approval hapus</span>`):(status==='waiting'?`<button class="btn btn-ghost btn-sm" onclick="_rpShowApproval(${menuId})" style="padding:0">${badge(status)} ${Auth.isAdmin()?'<span class=\"text-sm\">ℹ️ Lihat Detail</span>':''}</button>`:badge(status))}</span>
         <div style="display:flex;gap:12px;align-items:center">
           <label style="display:flex;align-items:center;gap:6px;cursor:${Auth.isAdmin()?'pointer':'default'}" class="text-sm">
             <input type="checkbox" ${aktif?'checked':''} ${Auth.isAdmin()?`onchange="_rpToggleAktif(${menuId},this.checked)"`:'disabled'} style="width:18px;height:18px"/> Aktif
           </label>
+          <button class="btn btn-ghost btn-sm" onclick="_rpView(${menuId})">View</button>
           <button class="btn btn-ghost btn-sm" onclick='_openResepEdit(${menuId},"${nama.replace(/"/g,'&quot;')}")'>Edit</button>
+          ${deletePending?'':`<button class="btn btn-danger btn-sm" onclick="_rpDeleteRequest(${menuId})">Delete</button>`}
         </div>
       </div>
       ${rejectReason?`<div class="text-sm" style="color:var(--red-600);padding:0 16px 8px">Alasan ditolak: ${rejectReason}</div>`:''}
+      ${deleteReject?`<div class="text-sm" style="color:var(--red-600);padding:0 16px 8px">Hapus ditolak: ${deleteReject}</div>`:''}
       <div class="card-body-p0">
         ${buildTable({cols:[{key:'bahan_nama',label:'Bahan'},{label:'Qty',render:r=>`<span class="font-mono">${r.qty} ${r.satuan}</span>`}],data:lines})}
       </div>
@@ -2168,10 +2864,11 @@ function _addResepLine(){
 function _collectResepLines(menuId,menuNama,pendingBefore){
   // Catatan: query di-scope ke child langsung dari #rp-lines supaya wrapper
   // #rp-lines sendiri tidak ikut kepilih (namanya juga cocok pola [id^=rp-line]).
+  const status = Auth.isAdmin() ? 'approved' : 'waiting';
   return [...document.querySelectorAll('#rp-lines > [id^=rp-line-]')].map(row=>{
     const b=row.querySelector('.rp-bahan'); const q=row.querySelector('.rp-qty'); const s=row.querySelector('.rp-sat');
     if(!b?.value||!q?.value)return null;
-    return{menu_id:menuId,menu_nama:menuNama,bahan_id:+b.value,bahan_nama:b.options[b.selectedIndex]?.text,qty:+q.value,satuan:s?.value||'',status:'waiting',aktif:true,pending_before:pendingBefore||null,created_by:Auth.user.username};
+    return{menu_id:menuId,menu_nama:menuNama,bahan_id:+b.value,bahan_nama:b.options[b.selectedIndex]?.text,qty:+q.value,satuan:s?.value||'',status,aktif:true,pending_before:Auth.isAdmin()?null:(pendingBefore||null),created_by:Auth.user.username};
   }).filter(Boolean);
 }
 async function _saveResep(){
@@ -2183,8 +2880,8 @@ async function _saveResep(){
     // Hapus resep lama untuk menu ini (kalau ada) supaya tidak dobel
     await DataAPI.deleteResepByMenu(menuId);
     await DataAPI.saveResep(lines);
-    await DataAPI.addAudit('Resep',menuNama,'Buat/Update (menunggu approval)');
-    Modal.close(); Toast.success('Resep disubmit untuk approval'); App.go('resep');
+    await DataAPI.addAudit('Resep',menuNama,Auth.isAdmin()?'Buat/Update (langsung, oleh admin)':'Buat/Update (menunggu approval)');
+    Modal.close(); Toast.success(Auth.isAdmin()?'Resep disimpan':'Resep disubmit untuk approval'); App.go('resep');
   }catch(e){Toast.error(e.message);}
 }
 async function _saveResepEdit(){
@@ -2196,9 +2893,50 @@ async function _saveResepEdit(){
   try{
     await DataAPI.deleteResepByMenu(menuId);
     await DataAPI.saveResep(lines);
-    await DataAPI.addAudit('Resep',menuNama,'Edit (menunggu approval)');
-    Modal.close(); Toast.success('Perubahan resep disubmit untuk approval'); App.go('resep');
+    await DataAPI.addAudit('Resep',menuNama,Auth.isAdmin()?'Edit (langsung, oleh admin)':'Edit (menunggu approval)');
+    Modal.close(); Toast.success(Auth.isAdmin()?'Perubahan disimpan':'Perubahan resep disubmit untuk approval'); App.go('resep');
   }catch(e){Toast.error(e.message);}
+}
+function _rpView(menuId){
+  const lines = (_rpLastResep||[]).filter(r=>r.menu_id===menuId);
+  if (!lines.length) return;
+  const first = lines[0];
+  _viewModal({title:`Detail Resep — ${first.menu_nama}`, subtitle:`Dibuat oleh ${first.created_by||'-'}`, fields:[
+    ...lines.map(l=>({label:l.bahan_nama, value:`${l.qty} ${l.satuan}`})),
+    {label:'Status', value:badge(first.status||'approved')},
+    {label:'Aktif', value:first.aktif!==false?'Ya':'Tidak'},
+  ]});
+}
+function _rpDeleteRequest(menuId){
+  const lines = (_rpLastResep||[]).filter(r=>r.menu_id===menuId);
+  if (!lines.length) return;
+  const menuNama = lines[0].menu_nama;
+  _deletePrompt({
+    adminMsg:`Yakin mau hapus resep "${menuNama}"? Tindakan ini tidak bisa dibatalkan.`,
+    userMsg:'Alasan hapus resep ini?',
+    onAdmin: async ()=>{
+      try{ await DataAPI.approveDeleteResep(menuId); Toast.success('Resep dihapus'); App.go('resep'); }
+      catch(e){Toast.error(e.message);}
+    },
+    onUser: async (reason)=>{
+      try{ await DataAPI.requestDeleteResep(menuId,reason); Toast.success('Permintaan hapus diajukan — menunggu approval admin'); App.go('resep'); }
+      catch(e){Toast.error(e.message);}
+    },
+  });
+}
+function _rpDeleteShowApproval(menuId){
+  const lines = (_rpLastResep||[]).filter(r=>r.menu_id===menuId);
+  if (!lines.length) return;
+  const first = lines[0];
+  _approvalModal({
+    title:`Hapus Resep — ${first.menu_nama}`,
+    subtitle:`Diajukan oleh ${first.created_by||'-'}`,
+    simple:true,
+    changes: lines.map(l=>({label:l.bahan_nama, after:`${l.qty} ${l.satuan}`})),
+    note: first.delete_reason || '(tidak ada alasan)',
+    onApprove: async ()=>{ await DataAPI.approveDeleteResep(menuId); Toast.success('Resep dihapus'); App.go('resep'); },
+    onReject: async (reason)=>{ await DataAPI.rejectDeleteResep(menuId,reason); Toast.warning('Permintaan hapus ditolak'); App.go('resep'); },
+  });
 }
 
 // ─── PAGE: AUDIT TRAIL ───────────────────────────────────────
@@ -2464,22 +3202,26 @@ const App = {
       const voidCount = (list,module) => isAdmin
         ? list.filter(x=>x.void_status==='pending').length
         : list.filter(x=>x.created_by===me && x.void_reject_reason && !_isDismissed(module,x.id,'void:'+x.void_reject_reason)).length;
+      const deleteCount = (list,module) => isAdmin
+        ? list.filter(x=>x.delete_status==='pending').length
+        : list.filter(x=>x.created_by===me && x.delete_reject_reason && !_isDismissed(module+'-del',x.id,x.delete_reject_reason)).length;
 
       // Resep: kelompokkan per menu_id biar tidak double-count per baris bahan
       const resepGroups = {};
       resep.forEach(r=>{ if(!resepGroups[r.menu_id]) resepGroups[r.menu_id]=r; });
       const resepList = Object.values(resepGroups).map(r=>({...r,id:r.menu_id}));
 
-      const drCount = isAdmin
+      const drCount = (isAdmin
         ? dr.filter(x=>x.status==='waiting').length
-        : dr.filter(x=>x.user===me && x.reject_reason && !_isDismissed('daily-report',x.id,x.reject_reason)).length;
+        : dr.filter(x=>x.user===me && x.reject_reason && !_isDismissed('daily-report',x.id,x.reject_reason)).length)
+        + deleteCount(dr.map(x=>({...x,created_by:x.user})),'daily-report');
 
       const counts = {
-        'master-bahan': statusCount(bahan,'bahan'),
-        'master-menu': statusCount(menu,'menu'),
-        'resep': statusCount(resepList,'resep'),
-        'penjualan': voidCount(penjualan,'penjualan'),
-        'pembelian': voidCount(pembelian,'pembelian'),
+        'master-bahan': statusCount(bahan,'bahan') + deleteCount(bahan,'bahan'),
+        'master-menu': statusCount(menu,'menu') + deleteCount(menu,'menu'),
+        'resep': statusCount(resepList,'resep') + deleteCount(resepList,'resep'),
+        'penjualan': voidCount(penjualan,'penjualan') + statusCount(penjualan,'penjualan'),
+        'pembelian': voidCount(pembelian,'pembelian') + statusCount(pembelian,'pembelian'),
         'daily-report': drCount,
       };
       Object.entries(counts).forEach(([key,count])=>{
