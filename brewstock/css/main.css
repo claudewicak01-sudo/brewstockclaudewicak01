@@ -113,6 +113,11 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--gray-50);color:va
 
 /* ─── TABLE ────────────────────────────────────────────── */
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+tr.row-notify{background:#fff7ed;box-shadow:inset 3px 0 0 var(--orange-500);animation:rowPulse 1.6s ease-in-out 2}
+tr.row-notify:hover{background:#ffedd5}
+.card-notify{box-shadow:0 0 0 2px var(--orange-500),var(--sh-md);animation:cardPulse 1.6s ease-in-out 2}
+@keyframes cardPulse{0%,100%{box-shadow:0 0 0 2px var(--orange-500)}50%{box-shadow:0 0 0 2px var(--orange-300)}}
+@keyframes rowPulse{0%,100%{background:#fff7ed}50%{background:#fed7aa}}
 table{width:100%;border-collapse:collapse;min-width:400px}
 th{font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em;padding:10px 14px;text-align:left;border-bottom:1px solid var(--gray-200);background:var(--gray-50);white-space:nowrap}
 td{padding:11px 14px;border-bottom:1px solid var(--gray-100);font-size:13px;vertical-align:middle}
