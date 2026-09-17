@@ -61,9 +61,11 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--gray-50);color:va
 .sidebar-urole{font-size:10px;color:rgba(255,255,255,.5)}
 
 /* ─── TOPBAR ────────────────────────────────────────────── */
-.main-wrap{margin-left:var(--nav-w);flex:1;min-height:100vh;display:flex;flex-direction:column;transition:margin-left .25s}
+.main-wrap{margin-left:0;flex:1;min-height:100vh;display:flex;flex-direction:column}
 .topbar{height:var(--topbar-h);background:#fff;border-bottom:1px solid var(--gray-200);display:flex;align-items:center;justify-content:space-between;padding:0 20px;position:sticky;top:0;z-index:100}
 .topbar-left{display:flex;align-items:center;gap:12px}
+.back-btn{display:flex;align-items:center;justify-content:center;background:none;border:none;cursor:pointer;color:var(--gray-700);padding:6px;border-radius:var(--r-sm);transition:background .15s}
+.back-btn:hover{background:var(--gray-100)}
 .hamburger{display:none;background:none;border:none;cursor:pointer;color:var(--gray-600);padding:4px}
 .page-ttl{font-size:15px;font-weight:700}
 .topbar-right{display:flex;align-items:center;gap:12px}
@@ -76,6 +78,25 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--gray-50);color:va
 .page{flex:1;padding:20px}
 .page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;gap:12px;flex-wrap:wrap}
 .page-head h2{font-size:18px;font-weight:800}
+
+/* ─── HOME SCREEN (grid ikon ala home screen HP) ──────────── */
+.home-wrap{padding:24px 20px 40px;max-width:720px;margin:0 auto}
+.home-greeting{margin-bottom:22px}
+.home-greeting h1{font-size:20px;font-weight:800;color:var(--gray-900)}
+.home-greeting p{font-size:13px;color:var(--gray-500);margin-top:2px}
+.home-group-label{font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.04em;margin:20px 0 10px}
+.home-group-label:first-of-type{margin-top:0}
+.icon-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px 8px}
+.app-icon{display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;position:relative;-webkit-tap-highlight-color:transparent}
+.app-icon-glyph{width:56px;height:56px;border-radius:16px;background:linear-gradient(155deg,var(--blue-600),var(--blue-800));display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(30,64,175,.25);transition:transform .12s}
+.app-icon-glyph svg{width:24px;height:24px;stroke:#fff}
+.app-icon:active .app-icon-glyph{transform:scale(.92)}
+.app-icon-label{font-size:11px;font-weight:600;color:var(--gray-700);text-align:center;line-height:1.25;max-width:74px}
+.app-icon-badge{position:absolute;top:-4px;right:6px;background:var(--red-600);color:#fff;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:99px;display:flex;align-items:center;justify-content:center;padding:0 4px;box-shadow:0 0 0 2px #fff}
+@media(max-width:480px){
+  .icon-grid{grid-template-columns:repeat(4,1fr);gap:14px 4px}
+  .app-icon-glyph{width:52px;height:52px;border-radius:14px}
+}
 .page-head p{font-size:12px;color:var(--gray-500);margin-top:2px}
 
 /* ─── CARDS ────────────────────────────────────────────── */
