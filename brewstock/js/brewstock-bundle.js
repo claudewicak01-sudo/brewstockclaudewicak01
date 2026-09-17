@@ -846,6 +846,35 @@ function stackedBar(items, w=300, h=32) {
   }).join('');
 }
 // ─── PAGE: DASHBOARD ────────────────────────────────────────
+// ─── PAGE: HOME (grid ikon ala home screen HP) ─────────────────
+function pageHome(el){
+  const isAdmin = Auth.isAdmin();
+  const groups = NAV_ADMIN.map(({group, items}) => ({
+    group: group || 'Utama',
+    items: items.filter(k => { const r = ROUTES[k]; return r && (!r.admin || isAdmin); }),
+  })).filter(g => g.items.length);
+
+  el.innerHTML = `
+  <div class="home-wrap">
+    <div class="home-greeting">
+      <h1>Halo, ${(Auth.user?.nama || Auth.user?.username || '').split(' ')[0]}</h1>
+      <p>${isAdmin ? 'Admin / Owner' : 'Barista'} — pilih menu di bawah</p>
+    </div>
+    ${groups.map(g => `
+      <div class="home-group-label">${g.group}</div>
+      <div class="icon-grid">
+        ${g.items.map(k => {
+          const r = ROUTES[k];
+          return `<div class="app-icon" onclick="App.go('${k}')">
+            <div class="app-icon-glyph">${r.icon()}<span class="app-icon-badge" id="homebadge-${k}" style="display:none"></span></div>
+            <span class="app-icon-label">${r.label}</span>
+          </div>`;
+        }).join('')}
+      </div>`).join('')}
+  </div>`;
+  App._refreshNavBadges();
+}
+
 async function pageDashboard(el) {
   el.innerHTML = `<div class="empty-state">${IC.trend()} <p>Memuat dashboard...</p></div>`;
   const today = new Date().toISOString().split('T')[0];
@@ -2997,6 +3026,7 @@ async function _toggleUser(id,status){
 }
 // ─── ROUTER ──────────────────────────────────────────────────
 const ROUTES = {
+  'home':         { label:'BrewStock',      fn: pageHome,         icon: null,         admin: false },
   // Admin routes
   'dashboard':    { label:'Dashboard',      fn: pageDashboard,    icon: IC.dashboard, admin: false },
   'penjualan':    { label:'Penjualan',      fn: pagePenjualan,    icon: IC.sale,      admin: false },
@@ -3059,34 +3089,24 @@ const App = {
   _showApp() {
     document.getElementById('login-wrap').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
-    this._buildNav();
     this._buildUser();
-    this._buildMobileNav();
     // Kalau habis refresh, balik ke halaman terakhir yang dibuka (disimpan di
-    // URL hash) alih-alih selalu balik ke dashboard.
+    // URL hash) alih-alih selalu balik ke home.
     const fromHash = location.hash.replace('#','');
-    this.go(fromHash && ROUTES[fromHash] ? fromHash : 'dashboard');
+    this.go(fromHash && ROUTES[fromHash] ? fromHash : 'home');
   },
+  goHome() { this.go('home'); },
 
   async go(page) {
     const route = ROUTES[page];
-    if (!route) return this.go('dashboard');
-    if (route.admin && !Auth.isAdmin()) return this.go('dashboard');
+    if (!route) return this.go('home');
+    if (route.admin && !Auth.isAdmin()) return this.go('home');
 
     this.current = page;
     if (location.hash.replace('#','') !== page) location.hash = page;
-    document.getElementById('page-ttl').textContent = route.label;
-
-    // Active nav highlight
-    document.querySelectorAll('.nav-item').forEach(el => {
-      el.classList.toggle('active', el.dataset.page === page);
-    });
-    document.querySelectorAll('.mobile-nav-item').forEach(el => {
-      el.classList.toggle('active', el.dataset.page === page);
-    });
-
-    // Close sidebar on mobile
-    if (window.innerWidth <= 768) this.closeSidebar();
+    document.getElementById('page-ttl').textContent = page==='home' ? 'BrewStock' : route.label;
+    const backBtn = document.getElementById('back-btn');
+    if (backBtn) backBtn.style.display = page==='home' ? 'none' : 'flex';
 
     const content = document.getElementById('page-content');
     content.innerHTML = `<div class="empty-state" style="padding:60px">${IC.trend()} <p>Memuat...</p></div>`;
@@ -3147,9 +3167,6 @@ const App = {
   _buildUser() {
     const u = Auth.user;
     const ini = (u.nama || u.username)[0].toUpperCase();
-    document.getElementById('sidebar-avatar').textContent = ini;
-    document.getElementById('sidebar-uname').textContent = u.nama || u.username;
-    document.getElementById('sidebar-urole').textContent = u.role === 'admin' ? 'Admin / Owner' : 'Barista';
     document.getElementById('topbar-avatar').textContent = ini;
     document.getElementById('topbar-uname').textContent = u.nama || u.username;
   },
@@ -3226,7 +3243,7 @@ const App = {
       };
       Object.entries(counts).forEach(([key,count])=>{
         const label = count>9 ? '9+' : String(count);
-        document.querySelectorAll(`#navbadge-${key}, #mobilenavbadge-${key}`).forEach(el=>{
+        document.querySelectorAll(`#navbadge-${key}, #mobilenavbadge-${key}, #homebadge-${key}`).forEach(el=>{
           el.textContent = count>0 ? label : '';
           el.style.display = count>0 ? '' : 'none';
         });
