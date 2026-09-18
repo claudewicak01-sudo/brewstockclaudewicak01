@@ -847,8 +847,18 @@ function stackedBar(items, w=300, h=32) {
 }
 // ─── PAGE: DASHBOARD ────────────────────────────────────────
 // ─── PAGE: HOME (grid ikon ala home screen HP) ─────────────────
+const HOME_GROUP_COLOR = { 'Utama':'c-blue', 'Operasional':'c-orange', 'Master Data':'c-purple', 'Manajemen':'c-slate' };
+function _greeting(){
+  const h = new Date().getHours();
+  if (h < 11) return 'Selamat Pagi';
+  if (h < 15) return 'Selamat Siang';
+  if (h < 18) return 'Selamat Sore';
+  return 'Selamat Malam';
+}
 function pageHome(el){
   const isAdmin = Auth.isAdmin();
+  const nama = (Auth.user?.nama || Auth.user?.username || '').split(' ')[0];
+  const ini = (Auth.user?.nama || Auth.user?.username || '?')[0].toUpperCase();
   const groups = NAV_ADMIN.map(({group, items}) => ({
     group: group || 'Utama',
     items: items.filter(k => { const r = ROUTES[k]; return r && (!r.admin || isAdmin); }),
@@ -856,17 +866,27 @@ function pageHome(el){
 
   el.innerHTML = `
   <div class="home-wrap">
-    <div class="home-greeting">
-      <h1>Halo, ${(Auth.user?.nama || Auth.user?.username || '').split(' ')[0]}</h1>
-      <p>${isAdmin ? 'Admin / Owner' : 'Barista'} — pilih menu di bawah</p>
+    <div class="home-header">
+      <div class="home-header-greet">
+        <p>${_greeting()}</p>
+        <h1>${nama}!</h1>
+      </div>
+      <div class="home-header-actions">
+        <div class="home-bell">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="app-icon-badge" id="home-bell-badge" style="display:none"></span>
+        </div>
+        <div class="home-avatar" onclick="App.logout()" title="Logout">${ini}</div>
+      </div>
     </div>
     ${groups.map(g => `
       <div class="home-group-label">${g.group}</div>
       <div class="icon-grid">
         ${g.items.map(k => {
           const r = ROUTES[k];
+          const color = HOME_GROUP_COLOR[g.group] || 'c-blue';
           return `<div class="app-icon" onclick="App.go('${k}')">
-            <div class="app-icon-glyph">${r.icon()}<span class="app-icon-badge" id="homebadge-${k}" style="display:none"></span></div>
+            <div class="app-icon-glyph ${color}">${r.icon()}<span class="app-icon-badge" id="homebadge-${k}" style="display:none"></span></div>
             <span class="app-icon-label">${r.label}</span>
           </div>`;
         }).join('')}
@@ -3090,12 +3110,28 @@ const App = {
     document.getElementById('login-wrap').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     this._buildUser();
+    this._buildBottomTabs();
     // Kalau habis refresh, balik ke halaman terakhir yang dibuka (disimpan di
     // URL hash) alih-alih selalu balik ke home.
     const fromHash = location.hash.replace('#','');
     this.go(fromHash && ROUTES[fromHash] ? fromHash : 'home');
   },
   goHome() { this.go('home'); },
+
+  // 5 shortcut paling sering dipakai sehari-hari, sisanya lewat grid Home.
+  BOTTOM_TABS: ['home','penjualan','stock','pembelian','daily-report'],
+  _buildBottomTabs(){
+    const wrap = document.getElementById('bottom-tabs');
+    if (!wrap) return;
+    wrap.innerHTML = this.BOTTOM_TABS.map(k=>{
+      const r = ROUTES[k];
+      const label = k==='home' ? 'Home' : (k==='stock' ? 'Stok' : (k==='daily-report' ? 'Laporan' : r.label));
+      return `<div class="bottom-tab" data-page="${k}" onclick="App.go('${k}')">
+        ${r.icon()}<span>${label}</span>
+        <span class="app-icon-badge" id="tabbadge-${k}" style="display:none"></span>
+      </div>`;
+    }).join('');
+  },
 
   async go(page) {
     const route = ROUTES[page];
@@ -3104,9 +3140,14 @@ const App = {
 
     this.current = page;
     if (location.hash.replace('#','') !== page) location.hash = page;
+    const topbar = document.getElementById('topbar');
+    if (topbar) topbar.style.display = page==='home' ? 'none' : 'flex';
     document.getElementById('page-ttl').textContent = page==='home' ? 'BrewStock' : route.label;
     const backBtn = document.getElementById('back-btn');
     if (backBtn) backBtn.style.display = page==='home' ? 'none' : 'flex';
+    document.querySelectorAll('.bottom-tab').forEach(el=>{
+      el.classList.toggle('active', el.dataset.page===page);
+    });
 
     const content = document.getElementById('page-content');
     content.innerHTML = `<div class="empty-state" style="padding:60px">${IC.trend()} <p>Memuat...</p></div>`;
@@ -3243,11 +3284,14 @@ const App = {
       };
       Object.entries(counts).forEach(([key,count])=>{
         const label = count>9 ? '9+' : String(count);
-        document.querySelectorAll(`#navbadge-${key}, #mobilenavbadge-${key}, #homebadge-${key}`).forEach(el=>{
+        document.querySelectorAll(`#navbadge-${key}, #mobilenavbadge-${key}, #homebadge-${key}, #tabbadge-${key}`).forEach(el=>{
           el.textContent = count>0 ? label : '';
           el.style.display = count>0 ? '' : 'none';
         });
       });
+      const total = Object.values(counts).reduce((a,b)=>a+b,0);
+      const bell = document.getElementById('home-bell-badge');
+      if (bell) { bell.textContent = total>9?'9+':String(total); bell.style.display = total>0?'':'none'; }
     }catch(e){ console.error('[BrewStock] gagal hitung notifikasi nav', e); }
   },
 
@@ -3279,4 +3323,13 @@ function fillDemo(role) {
   document.getElementById('l-user').value = role === 'admin' ? 'admin' : 'bartender';
   document.getElementById('l-pass').value = role === 'admin' ? 'admin123' : 'user123';
   setTimeout(() => App.login(), 50);
+}
+function togglePass(){
+  const inp = document.getElementById('l-pass');
+  const icon = document.getElementById('l-eye-icon');
+  const showing = inp.type === 'text';
+  inp.type = showing ? 'password' : 'text';
+  icon.innerHTML = showing
+    ? '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>'
+    : '<path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.6 18.6 0 0 1 5.06-5.94M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a18.6 18.6 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>';
 }
